@@ -1,0 +1,1189 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Atlas Map Editor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/*@LEAFLET_CSS@*/
+</style>
+<style>
+/* Layout: a one-screen cartographer's bench. Toolbar on top, the map or globe as the canvas, an inspector on the right (bottom sheet on phones). */
+:root {
+  --bg: #e9eef0; --panel: #f8fafb; --ink: #1a2327; --muted: #5a696e; --line: #cdd7da; --accent: #b3164f; --accent-ink: #fff;
+  --font-display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  /* map style tokens, overwritten by the chosen map style */
+  --ocean: #b7d0d9; --mstroke: #44545a; --mtext: #1e272a; --mhalo: rgba(255,255,255,.75); --grat: rgba(40,80,95,.14);
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #10171a; --panel: #162024; --ink: #e2e9eb; --muted: #91a2a7; --line: #2a393e; --accent: #ff5f94; --accent-ink: #1a0710; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #10171a; --panel: #162024; --ink: #e2e9eb; --muted: #91a2a7; --line: #2a393e; --accent: #ff5f94; --accent-ink: #1a0710; color-scheme: dark }
+
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 var(--font-body); display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+input[type=range], input[type=checkbox] { accent-color: var(--accent); }
+
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.brand { font: 700 22px/1 var(--font-display); letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.seg { display: flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; border-right: 1px solid var(--line); border-radius: 0; }
+.seg button:last-child { border-right: 0; }
+button { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 11px; cursor: pointer; white-space: nowrap; }
+button:hover:not(:disabled) { border-color: var(--muted); }
+button:disabled { opacity: .45; cursor: default; }
+button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
+.seg.big button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.sep { width: 1px; height: 24px; background: var(--line); }
+
+main { display: grid; grid-template-columns: 1fr 320px; min-height: 0; }
+#mapwrap { position: relative; min-height: 0; }
+#map, #globe { position: absolute; inset: 0; }
+#globe { background: #04070c; cursor: grab; }
+#globe:active { cursor: grabbing; }
+#globe canvas { display: block; width: 100%; height: 100%; }
+#map.painting, #map.painting .leaflet-interactive { cursor: crosshair; }
+aside { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 22px; }
+aside h2 { font: 600 13px/1 var(--font-display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 2px; }
+label.f { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+input[type=text], input[type=search], textarea, select { width: 100%; box-sizing: border-box; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; color: var(--ink); }
+input[type=color] { width: 40px; height: 28px; padding: 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); cursor: pointer; flex: none; }
+.stack { display: grid; gap: 10px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.hint { color: var(--muted); font-size: 13px; margin: 0; }
+.stat { font: 500 12px var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 99px; font-size: 12px; }
+.sw { width: 10px; height: 10px; border-radius: 2px; border: 1px solid var(--line); flex: none; }
+#results { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 2px; }
+#results button { width: 100%; text-align: left; border: 0; background: none; padding: 5px 6px; display: flex; gap: 8px; align-items: center; }
+#results button:hover { background: var(--bg); }
+.check { display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); }
+.checks { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.styles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.styles button { display: grid; gap: 5px; padding: 6px; font-size: 12px; text-align: left; overflow: hidden; text-overflow: ellipsis; }
+.styles button[aria-pressed="true"] { background: var(--bg); color: var(--ink); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.swatch { height: 24px; border-radius: 3px; position: relative; overflow: hidden; }
+.swatch i { position: absolute; left: 22%; top: 22%; width: 52%; height: 60%; border-radius: 40% 55% 45% 50%; border: 1.5px solid; }
+details { border: 1px solid var(--line); border-radius: 8px; padding: 0 10px; }
+details[open] { padding-bottom: 10px; }
+summary { cursor: pointer; padding: 8px 0; font-weight: 500; font-size: 13px; }
+details > .stack { margin-top: 2px; }
+.sl { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; font-size: 12px; color: var(--muted); }
+.sl input { grid-column: 1 / -1; width: 100%; margin: 0; }
+.sl output { font: 500 11px var(--font-mono); font-variant-numeric: tabular-nums; color: var(--ink); }
+.colors { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; }
+.colors label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); min-width: 0; }
+.brushes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+.brushes button { display: flex; align-items: center; gap: 7px; padding: 5px 8px; font-size: 12px; text-align: left; }
+.brushes button[aria-pressed="true"] { background: var(--bg); color: var(--ink); border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.brushes .sw { width: 14px; height: 14px; }
+
+/* map furniture */
+.leaflet-container { background: var(--ocean); font-family: var(--font-body); }
+.country { stroke: var(--mstroke); stroke-width: .7; stroke-linejoin: round; }
+.country.nob:not(.sel) { stroke: none; }
+.coast { stroke: var(--mstroke); stroke-width: 3; stroke-linejoin: round; }
+.country.sel, .land.sel { stroke: var(--accent); stroke-width: 2.6; stroke-dasharray: none; stroke-opacity: 1; }
+.grat { stroke: var(--grat); stroke-width: 1; fill: none; pointer-events: none; }
+.brush { stroke: #fff; stroke-width: 1.5; stroke-dasharray: 4 3; fill: none; pointer-events: none; filter: drop-shadow(0 0 1px #000); }
+.leaflet-tooltip.lbl { background: none; border: 0; box-shadow: none; padding: 0; color: var(--mtext); font: 600 12px/1.05 var(--font-display); letter-spacing: .08em; text-transform: uppercase; text-align: center; white-space: normal; width: 110px; margin-left: -55px; text-shadow: 0 0 3px var(--mhalo), 0 0 3px var(--mhalo); pointer-events: none; }
+.leaflet-tooltip.lbl::before { display: none; }
+.lbl.off { display: none; }
+.marker-icon { background: #fff; border: 2px solid var(--accent); border-radius: 50%; margin: -7px 0 0 -7px !important; width: 10px !important; height: 10px !important; }
+.marker-icon-middle { opacity: .6; margin: -5px 0 0 -5px !important; width: 6px !important; height: 6px !important; }
+.leaflet-control-zoom a { background: var(--panel) !important; color: var(--ink) !important; border-color: var(--line) !important; }
+
+#modebar { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 500; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 12px; font-size: 13px; width: max-content; max-width: calc(100% - 32px); box-sizing: border-box; box-shadow: 0 4px 16px rgba(0,0,0,.12); }
+#modebar b { color: var(--accent); }
+#coords { position: absolute; right: 12px; bottom: 14px; z-index: 500; font: 12px var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; background: var(--panel); padding: 3px 7px; border-radius: 4px; }
+#toast, #busy { position: absolute; left: 50%; top: 16px; transform: translateX(-50%); z-index: 600; background: var(--ink); color: var(--panel); padding: 8px 14px; border-radius: 6px; font-size: 13px; max-width: calc(100% - 32px); box-sizing: border-box; }
+#busy { top: 56px; }
+#exitClean { position: absolute; right: 12px; top: 12px; z-index: 600; }
+
+dialog { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; width: min(560px, calc(100vw - 32px)); box-sizing: border-box; padding: 18px; }
+dialog::backdrop { background: rgba(0,0,0,.4); }
+dialog h2 { font: 700 22px var(--font-display); text-transform: uppercase; margin: 0 0 6px; }
+dialog textarea { height: 220px; font: 11px/1.4 var(--font-mono); resize: vertical; }
+
+body.clean header, body.clean aside, body.clean #modebar, body.clean #coords, body.clean .leaflet-control-zoom { display: none; }
+body.clean main { grid-template-columns: 1fr; }
+
+@media (max-width: 760px) {
+  main { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+  aside { border-left: 0; border-top: 1px solid var(--line); max-height: 42vh; }
+  #coords { display: none; }
+  #modebar { bottom: 8px; }
+  .styles { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: no-preference) { button { transition: background .12s, border-color .12s; } }
+</style>
+
+<header>
+  <div class="brand">Atlas</div>
+  <div class="seg big" id="dim" role="group" aria-label="View">
+    <button data-dim="2d">2D map</button>
+    <button data-dim="3d">3D globe</button>
+  </div>
+  <div class="seg big" id="earth" role="group" aria-label="Map mode">
+    <button data-earth="countries" title="Countries with borders and names">Countries</button>
+    <button data-earth="simple" title="Plain land and sea, no borders">Simple Earth</button>
+  </div>
+  <div class="tools" role="toolbar" aria-label="Map tools" data-dim="2d">
+    <div class="seg" id="modes">
+      <button data-mode="select" title="Click shapes to select them (Esc)">Select</button>
+      <button data-mode="edit" title="Drag the corner points of the selected shape">Edit border</button>
+      <button data-mode="annex" data-only="countries" title="Draw an area for the selected country to take over">Annex area</button>
+      <button data-mode="newc" data-only="countries" title="Draw a new country; it takes the land you draw over">New country</button>
+      <button data-mode="addland" data-only="simple" title="Draw new land in the sea">Add land</button>
+      <button data-mode="erase" title="Draw an area to turn into sea">Flood land</button>
+      <button data-mode="paint" title="Paint deserts, forests, ice and other terrain onto the land">Paint terrain</button>
+    </div>
+    <span class="sep"></span>
+    <button id="merge" data-only="countries" disabled title="Merge the selected countries into one">Merge</button>
+    <button id="del" disabled title="Remove the selected shapes (Delete)">Delete</button>
+  </div>
+  <div class="tools">
+    <button id="undo" disabled title="Undo (Ctrl+Z)">Undo</button>
+    <button id="redo" disabled title="Redo (Ctrl+Y)">Redo</button>
+  </div>
+</header>
+
+<main>
+  <div id="mapwrap">
+    <div id="map"></div>
+    <div id="globe" hidden></div>
+    <div id="modebar" aria-live="polite"></div>
+    <div id="coords"></div>
+    <div id="toast" role="status" hidden></div>
+    <div id="busy" role="status" hidden>Building terrain…</div>
+    <button id="exitClean" hidden>Exit clean view</button>
+  </div>
+  <aside id="aside">
+    <section class="stack" data-dim="2d">
+      <h2>Selection</h2>
+      <div id="sel" class="stack"></div>
+    </section>
+
+    <section class="stack" data-real="yes" data-dim="2d">
+      <h2>Paint terrain</h2>
+      <p class="hint">Pick a terrain, press Paint terrain, then drag across the land. Auto lets the climate settings decide again.</p>
+      <div class="brushes" id="brushes"></div>
+      <div id="brushSize"></div>
+      <div class="row"><button id="paintBtn" class="primary">Paint terrain</button><button id="clearPaint">Clear all painting</button></div>
+    </section>
+
+    <section class="stack">
+      <h2>Map style</h2>
+      <div class="styles" id="styles"></div>
+      <div class="checks" data-only="countries">
+        <label class="check"><input type="checkbox" id="names"> Country names</label>
+        <label class="check"><input type="checkbox" id="borders"> Borders</label>
+      </div>
+      <details>
+        <summary>Custom colours</summary>
+        <div class="stack">
+          <div class="colors" id="customColors"></div>
+          <div class="row"><button id="cReset">Use the style's colours</button></div>
+        </div>
+      </details>
+    </section>
+
+    <section class="stack" data-real="yes">
+      <h2>Terrain</h2>
+      <details open>
+        <summary>Climate and landforms</summary>
+        <div class="stack" id="terrainSliders"></div>
+        <div class="row" style="margin-top:10px"><button id="newTerrain">New terrain</button><span class="stat" id="seedOut"></span></div>
+      </details>
+      <details>
+        <summary>Terrain and water colours</summary>
+        <div class="colors" id="terrainColors"></div>
+      </details>
+      <div class="row"><button id="tReset">Reset terrain settings</button></div>
+    </section>
+
+    <section class="stack" data-clouds>
+      <h2>Clouds</h2>
+      <div class="checks" id="cloudChecks"></div>
+      <div class="stack" id="cloudSliders"></div>
+      <div class="row"><button id="newClouds">New cloud pattern</button></div>
+    </section>
+
+    <section class="stack" data-dim="3d">
+      <h2>Globe</h2>
+      <div class="checks" id="globeChecks"></div>
+      <div class="stack" id="globeSliders"></div>
+      <div class="colors" id="globeColors"></div>
+      <div class="row"><button id="resetCam">Reset view</button><button id="gReset">Reset globe settings</button></div>
+    </section>
+
+    <section data-only="countries" data-dim="2d">
+      <h2>Find a country</h2>
+      <input type="search" id="search" placeholder="Type a name…" autocomplete="off" style="margin-top:8px">
+      <ul id="results"></ul>
+    </section>
+
+    <section class="stack">
+      <h2>File</h2>
+      <div class="row">
+        <button id="png" class="primary">Export PNG</button>
+        <button id="clean">Clean view</button>
+        <button id="io">Save / load file</button>
+        <button id="reset">Reset map</button>
+      </div>
+      <p class="hint">Your map saves automatically in this browser. Export PNG saves what you see: the whole flat map in 2D, or the globe as it faces you in 3D.</p>
+    </section>
+  </aside>
+</main>
+
+<dialog id="dlg">
+  <h2>Save or load a map</h2>
+  <p class="hint">Copy this text and keep it in a file to save your map, painted terrain included. To load a map, paste its text here or choose a .json / .geojson file.</p>
+  <div class="stack" style="margin-top:12px">
+    <textarea id="ioText" spellcheck="false" aria-label="Map data"></textarea>
+    <div class="row">
+      <button id="copy">Copy</button>
+      <button id="loadText" class="primary">Load this text</button>
+      <label class="check">or file <input type="file" id="file" accept=".json,.geojson,application/json"></label>
+      <button id="close" style="margin-left:auto">Close</button>
+    </div>
+    <p class="hint" id="ioMsg"></p>
+  </div>
+</dialog>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@geoman-io/leaflet-geoman-free@2.17.0/dist/leaflet-geoman.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@turf/turf@7.1.0/turf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const WORLD = /*@WORLD@*/;
+const PALETTE = ['#e9c37f', '#9fc8a2', '#e49d8c', '#a9badf', '#d5b3d6', '#cbd58b', '#8fd0cc', '#f1ab6c'];
+// fill: 'color' uses each country's own colour, 'mono' paints all land one colour, 'real' uses the generated terrain
+const STYLES = {
+  realistic: { name: 'Realistic', ocean: '#0b2c4f', land: '#5d7f45', stroke: '#ffffff', strokeOpacity: .5, text: '#ffffff', halo: 'rgba(0,0,0,.65)', grat: 'rgba(255,255,255,.07)', fill: 'real' },
+  political: { name: 'Political', ocean: '#b7d0d9', land: '#e4dcc0', stroke: '#44545a', text: '#1e272a', halo: 'rgba(255,255,255,.75)', grat: 'rgba(40,80,95,.14)', fill: 'color' },
+  vintage:   { name: 'Vintage',   ocean: '#d9cca8', land: '#efe3c3', stroke: '#6b4f2a', text: '#4a3520', halo: 'rgba(250,240,215,.85)', grat: 'rgba(107,79,42,.2)', fill: 'color', opacity: .5 },
+  natural:   { name: 'Natural',   ocean: '#9fc4dc', land: '#c6d5a2', stroke: '#857a52', text: '#2f3a24', halo: 'rgba(240,245,230,.8)', grat: 'rgba(255,255,255,.3)', fill: 'mono', dash: '4 3' },
+  night:     { name: 'Night',     ocean: '#0b1622', land: '#1f2d3a', stroke: '#56c8f0', text: '#cfe9f5', halo: 'rgba(11,22,34,.9)', grat: 'rgba(86,200,240,.1)', fill: 'mono' },
+  blueprint: { name: 'Blueprint', ocean: '#1f4f8a', land: '#2b62a3', stroke: '#e6f0ff', text: '#ffffff', halo: 'rgba(31,79,138,.9)', grat: 'rgba(230,240,255,.22)', fill: 'mono' },
+  ink:       { name: 'Ink',       ocean: '#ffffff', land: '#f1f1ee', stroke: '#151515', text: '#151515', halo: 'rgba(255,255,255,.9)', grat: 'rgba(0,0,0,.08)', fill: 'mono' },
+};
+// terrain ids 1-9 are stored in the painted-terrain grid; 0 means "let the climate decide"
+const BIOMES = [null, ['ice', 'Ice & snow'], ['tundra', 'Tundra'], ['taiga', 'Taiga'], ['forest', 'Forest'], ['grass', 'Grassland'], ['savanna', 'Savanna'], ['desert', 'Desert'], ['jungle', 'Jungle'], ['rock', 'Mountain rock']];
+const [ICE, TUNDRA, TAIGA, FOREST, GRASS, SAVANNA, DESERT, JUNGLE, ROCK] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+const DEFAULTS = {
+  terrain: { seed: 7, iceLat: 70, seaIce: 77, deserts: .6, green: 0, mountains: .5, relief: .6, shallows: .5,
+    colors: { deep: '#0b2c4f', shallow: '#1d7391', ice: '#eef3f6', tundra: '#8d8a6e', taiga: '#2e4f34', forest: '#3e6b34', grass: '#86a04f', savanna: '#b8a660', desert: '#dcc391', jungle: '#22562b', rock: '#776b5f' } },
+  clouds: { on: true, move: true, cover: .5, opacity: .8, speed: .4, seed: 3 },
+  globe: { spin: true, spinSpeed: .4, shading: true, sunLon: 20, sunLat: 10, atmo: true, atmoColor: '#6fb3ff', stars: true, space: '#04070c', shine: .5 },
+};
+const clone = o => JSON.parse(JSON.stringify(o));
+const KEY = 'atlas.map.v1', VIEW_KEY = 'atlas.view.v1';
+const $ = id => document.getElementById(id);
+const D2R = Math.PI / 180;
+
+let features = [], selected = new Set(), mode = 'select';
+let undoStack = [], redoStack = [], current = null, nextId = 1;
+let view = { earth: 'countries', names: true, borders: true, style: 'political', dim: '2d', custom: {}, ...clone(DEFAULTS) };
+try {
+  const v = JSON.parse(localStorage.getItem(VIEW_KEY)) || {};
+  for (const g of ['terrain', 'clouds', 'globe']) v[g] = { ...clone(DEFAULTS[g]), ...(v[g] || {}) };
+  v.terrain.colors = { ...DEFAULTS.terrain.colors, ...(v.terrain.colors || {}) };
+  Object.assign(view, v);
+} catch {}
+if (!STYLES[view.style]) view.style = 'political';
+const simple = () => view.earth === 'simple';
+const eff = () => ({ ...STYLES[view.style], ...(view.custom[view.style] || {}) });
+const isReal = () => STYLES[view.style].fill === 'real';
+
+/* ---------- raster sizes for the realistic terrain ---------- */
+const TW = 2048, TH = 1024;   // terrain colour texture
+const NW = 1024, NH = 512;    // noise fields, specular and bump maps
+const PW = 1024, PH = 512;    // painted-terrain grid
+const CW = 1024, CH = 512;    // clouds
+const mk = (w, h) => Object.assign(document.createElement('canvas'), { width: w, height: h });
+const ctx2 = c => c.getContext('2d', { willReadFrequently: true });
+let paint = new Uint8Array(PW * PH);
+
+/* ---------- data ---------- */
+const mapRings = (g, fn) => ({ ...g, coordinates: g.type === 'Polygon' ? g.coordinates.map(fn) : g.coordinates.map(p => p.map(fn)) });
+// Antarctica's outline stops at 84.7°S and jumps from 180° back to -180°; route that jump down through the pole so the polar cap is land
+const closePole = ring => {
+  const i = ring.findIndex((c, k) => k && c[1] < -60 && Math.abs(c[0] - ring[k - 1][0]) >= 360);
+  return i < 0 ? ring : [...ring.slice(0, i), [ring[i - 1][0], -90], [ring[i][0], -90], ...ring.slice(i)];
+};
+function baseMap() {
+  const geoms = WORLD.objects.countries.geometries;
+  const fc = topojson.feature(WORLD, WORLD.objects.countries);
+  const nb = topojson.neighbors(geoms);
+  const idx = [];
+  // greedy map colouring so neighbours rarely share a colour
+  fc.features.forEach((f, i) => { const used = new Set(nb[i].map(j => idx[j])); let c = 0; while (used.has(c)) c++; idx[i] = c; });
+  for (const f of fc.features) if (f.geometry) f.geometry = mapRings(f.geometry, closePole);
+  // topojson re-stitches rings cut at the antimeridian (Russia, Fiji); shift their west side past 180° so they don't streak across the map
+  const unwrap = ring => { const xs = ring.map(c => c[0]); return Math.max(...xs) - Math.min(...xs) > 180 && !ring.some(c => c[1] < -89) ? ring.map(([x, y]) => [x < 0 ? x + 360 : x, y]) : ring; };
+  for (const f of fc.features) if (f.geometry) f.geometry = mapRings(f.geometry, unwrap);
+  return fc.features.filter(f => f.geometry).map((f, i) => ({
+    type: 'Feature', id: 'c' + i, properties: { name: f.properties.name, color: PALETTE[idx[i] % PALETTE.length] }, geometry: f.geometry
+  }));
+}
+// painted terrain is stored run-length encoded ("value.count" in base 36) so it stays small in saves and undo history
+const rleEncode = a => { const out = []; for (let i = 0; i < a.length;) { let j = i; while (j < a.length && a[j] === a[i]) j++; out.push(a[i].toString(36) + '.' + (j - i).toString(36)); i = j; } return out.join(','); };
+function rleDecode(s) {
+  const a = new Uint8Array(PW * PH); let i = 0;
+  for (const run of s.split(',')) { const [v, n] = run.split('.').map(x => parseInt(x, 36)); if (!(v >= 0 && v <= 9 && n > 0)) throw new Error('Bad terrain data'); a.fill(v, i, i + n); i += n; }
+  return a;
+}
+// Greenland's ice sheet can't come from climate rules alone, so it starts painted as ice
+function defaultPaint() {
+  const a = new Uint8Array(PW * PH), g = features.find(f => f.properties.name === 'Greenland');
+  if (!g) return a;
+  const c = mk(PW, PH), x = ctx2(c);
+  x.fillStyle = '#fff'; x.fill(shapePath(g, lon => (lon + 180) / 360 * PW, lat => (90 - lat) / 180 * PH), 'evenodd');
+  const d = x.getImageData(0, 0, PW, PH).data;
+  for (let i = 0; i < a.length; i++) if (d[i * 4 + 3] > 128) a[i] = ICE;
+  return a;
+}
+const snapshot = () => JSON.stringify({ type: 'FeatureCollection', features, terrain: rleEncode(paint) });
+function restore(json) {
+  const d = JSON.parse(json);
+  if (!d || !Array.isArray(d.features)) throw new Error('No features found');
+  const fs = d.features.filter(f => f && f.geometry && /Polygon$/.test(f.geometry.type)).map(f => ({
+    type: 'Feature', id: String(f.id ?? 'c' + nextId++),
+    properties: { name: String(f.properties?.name ?? 'Unnamed'), color: /^#[0-9a-f]{6}$/i.test(f.properties?.color) ? f.properties.color : PALETTE[0] },
+    geometry: f.geometry
+  }));
+  if (!fs.length) throw new Error('No land shapes found');
+  // repair maps saved by an earlier version, whose Antarctica was shifted off the map
+  const broken = fs.filter(f => f.geometry.coordinates.flat(Infinity).some((v, i) => i % 2 === 0 && v > 270));
+  if (broken.length) { const base = baseMap(); for (const f of broken) { const b = base.find(x => x.id === f.id); if (b) f.geometry = b.geometry; } }
+  const newPaint = typeof d.terrain === 'string' ? rleDecode(d.terrain) : null;
+  features = fs;
+  paint = newPaint || defaultPaint();
+  nextId = 1 + Math.max(0, ...features.map(f => +String(f.id).replace(/\D/g, '') || 0));
+  selected = new Set([...selected].filter(id => byId(id)));
+  geomChanged(); R.paintVer++;
+}
+const byId = id => features.find(f => f.id === id);
+function persist() { try { localStorage.setItem(KEY, current); } catch {} }
+function commit() {
+  const s = snapshot();
+  if (s === current) return;
+  if (current) { undoStack.push(current); if (undoStack.length > 60) undoStack.shift(); }
+  redoStack = []; current = s; persist(); updateButtons(); scheduleVisuals();
+}
+function travel(from, to) {
+  if (!from.length) return;
+  to.push(current); current = from.pop();
+  restore(current); persist(); render(); scheduleVisuals();
+}
+
+/* ---------- 2D map ---------- */
+// Plate carrée (EPSG:4326) so the whole globe, poles included, fits on the map; Mercator can't show the poles
+const WORLD_BOUNDS = L.latLngBounds([[-90, -180], [90, 192]]);
+const map = L.map('map', { crs: L.CRS.EPSG4326, zoomSnap: .25, maxZoom: 9, attributionControl: false,
+  maxBounds: WORLD_BOUNDS.pad(.08), maxBoundsViscosity: 1 });
+function fitWorld() { map.setMinZoom(0); map.fitBounds(WORLD_BOUNDS); map.setMinZoom(map.getZoom()); }
+fitWorld();
+map.on('resize', () => map.setMinZoom(map.getBoundsZoom(WORLD_BOUNDS)));
+for (const [name, z] of [['terrain', 350], ['cloudsPane', 450]]) { const p = map.createPane(name); p.style.zIndex = z; p.style.pointerEvents = 'none'; }
+const grat = [];
+for (let lon = -180; lon <= 180; lon += 30) grat.push([[-90, lon], [90, lon]]);
+for (let lat = -60; lat <= 60; lat += 30) grat.push([[lat, -180], [lat, 180]]);
+L.polyline(grat, { className: 'grat', interactive: false, pmIgnore: true }).addTo(map);
+
+// an image overlay that shows a live <canvas> instead of an <img>, so terrain painting updates instantly
+const CanvasOverlay = L.ImageOverlay.extend({
+  _initImage() {
+    const c = this._image = this._url;
+    L.DomUtil.addClass(c, 'leaflet-image-layer');
+    if (this._zoomAnimated) L.DomUtil.addClass(c, 'leaflet-zoom-animated');
+    c.onselectstart = c.onmousemove = L.Util.falseFn;
+  }
+});
+
+const coast = L.featureGroup().addTo(map);     // drawn first so it sits under the land
+const countries = L.featureGroup().addTo(map);
+const labels = L.layerGroup().addTo(map);
+const layerById = new Map(), coastById = new Map();
+let clickedCountry = false;
+
+function render() {
+  const st = eff(), s = simple(), real = isReal();
+  countries.clearLayers(); coast.clearLayers(); labels.clearLayers(); layerById.clear(); coastById.clear();
+  if (s && !real) for (const f of features) {
+    // Simple Earth: a thick outline under every shape; the land on top covers the inner borders, leaving only the coastline
+    const c = L.geoJSON(f, { interactive: false, pmIgnore: true, style: { className: 'coast', fill: false } }).getLayers()[0];
+    if (c) { coast.addLayer(c); coastById.set(f.id, c); }
+  }
+  for (const f of features) {
+    const sel = selected.has(f.id) ? ' sel' : '';
+    const fill = s || st.fill === 'mono' ? st.land : f.properties.color;
+    const style = s
+      ? { className: 'land' + sel, fillColor: fill, fillOpacity: real ? 0 : 1, color: fill, weight: 1, stroke: !real }
+      : { className: 'country' + sel + (view.borders ? '' : ' nob'), fillColor: fill, fillOpacity: real ? 0 : st.opacity ?? 1, weight: 1, opacity: st.strokeOpacity ?? 1, dashArray: st.dash };
+    const layer = L.geoJSON(f, { style }).getLayers()[0];
+    if (!layer) continue;
+    layer.on('click', e => {
+      if (!['select', 'edit'].includes(mode)) return; // let the drawing tool receive the click
+      clickedCountry = true;
+      pick(f.id, e.originalEvent.shiftKey || $('multi')?.checked);
+    });
+    layer.on('pm:edit', () => {
+      f.geometry = layer.toGeoJSON().geometry;
+      coastById.get(f.id)?.setLatLngs(layer.getLatLngs());
+      geomChanged(); commit();
+    });
+    countries.addLayer(layer); layerById.set(f.id, layer);
+    if (!s && view.names) addLabel(f);
+  }
+  if (mode === 'edit') enableEdit();
+  updateLabels(); updatePanel(); updateButtons();
+}
+function labelPoint(f) {
+  const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
+  let best = polys[0], bestA = 0;
+  for (const p of polys) { const a = turf.area(turf.polygon(p)); if (a > bestA) { bestA = a; best = p; } }
+  const poly = turf.polygon(best);
+  let pt = turf.centerOfMass(poly);
+  if (!turf.booleanPointInPolygon(pt, poly)) pt = turf.pointOnFeature(poly);
+  return pt.geometry.coordinates;
+}
+function addLabel(f) {
+  try {
+    const [lng, lat] = labelPoint(f);
+    const el = document.createElement('span'); el.textContent = f.properties.name;
+    const t = L.tooltip({ permanent: true, direction: 'center', className: 'lbl', interactive: false }).setLatLng([lat, lng]).setContent(el);
+    t.area = turf.area(f); labels.addLayer(t);
+  } catch {}
+}
+function updateLabels() {
+  // show bigger countries first; each zoom level reveals countries 4x smaller
+  const min = 1.4e12 / Math.pow(4, map.getZoom() - 1);
+  labels.eachLayer(t => t.getElement()?.classList.toggle('off', t.area < min));
+}
+map.on('zoomend', updateLabels);
+map.on('click', () => { if (clickedCountry) { clickedCountry = false; return; } if (mode === 'select') { selected.clear(); refreshSelection(); } });
+map.on('mousemove', e => { const { lat, lng } = e.latlng; const x = ((lng + 540) % 360) - 180; $('coords').textContent = `${Math.abs(lat).toFixed(2)}° ${lat >= 0 ? 'N' : 'S'}  ${Math.abs(x).toFixed(2)}° ${x >= 0 ? 'E' : 'W'}`; });
+
+function pick(id, add) {
+  if (add) selected.has(id) ? selected.delete(id) : selected.add(id);
+  else selected = new Set([id]);
+  refreshSelection();
+}
+function refreshSelection() {
+  layerById.forEach((l, id) => l._path?.classList.toggle('sel', selected.has(id)));
+  if (mode === 'edit') { disableEdit(); enableEdit(); }
+  if (mode === 'annex' && selected.size !== 1) setMode('select');
+  updatePanel(); updateButtons();
+}
+
+/* ---------- procedural terrain ---------- */
+// 3D value noise sampled on the unit sphere, so the texture wraps seamlessly at 180° and doesn't pinch at the poles
+function makeNoise(seed) {
+  let s = (Math.abs(seed | 0) * 2654435761 % 2147483646) + 1;
+  const rnd = () => (s = s * 16807 % 2147483647) / 2147483647;
+  const perm = [...Array(256).keys()];
+  for (let i = 255; i > 0; i--) { const j = rnd() * (i + 1) | 0; [perm[i], perm[j]] = [perm[j], perm[i]]; }
+  const p = new Uint8Array(512); for (let i = 0; i < 512; i++) p[i] = perm[i & 255];
+  const val = new Float32Array(256).map(rnd);
+  const h = (x, y, z) => val[p[p[p[x & 255] + (y & 255)] + (z & 255)]];
+  return (x, y, z) => {
+    const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+    let u = x - xi, v = y - yi, w = z - zi;
+    u = u * u * (3 - 2 * u); v = v * v * (3 - 2 * v); w = w * w * (3 - 2 * w);
+    const a = h(xi, yi, zi) + (h(xi + 1, yi, zi) - h(xi, yi, zi)) * u;
+    const b = h(xi, yi + 1, zi) + (h(xi + 1, yi + 1, zi) - h(xi, yi + 1, zi)) * u;
+    const c = h(xi, yi, zi + 1) + (h(xi + 1, yi, zi + 1) - h(xi, yi, zi + 1)) * u;
+    const d = h(xi, yi + 1, zi + 1) + (h(xi + 1, yi + 1, zi + 1) - h(xi, yi + 1, zi + 1)) * u;
+    const e = a + (b - a) * v, f = c + (d - c) * v;
+    return e + (f - e) * w;
+  };
+}
+function fbm(n, x, y, z, oct) { let s = 0, a = .5, t = 0; for (let o = 0; o < oct; o++) { s += a * n(x, y, z); t += a; a *= .5; x *= 2.03; y *= 2.03; z *= 2.03; } return s / t; }
+function zscore(a) {
+  let m = 0; for (const v of a) m += v; m /= a.length;
+  let q = 0; for (const v of a) q += (v - m) ** 2; const sd = Math.sqrt(q / a.length) || 1;
+  for (let i = 0; i < a.length; i++) a[i] = (a[i] - m) / sd;
+  return a;
+}
+function sphereLoop(w, h, fn) {
+  for (let y = 0; y < h; y++) {
+    const lat = (90 - (y + .5) / h * 180) * D2R, cl = Math.cos(lat), sl = Math.sin(lat);
+    for (let x = 0; x < w; x++) { const lon = ((x + .5) / w * 360 - 180) * D2R; fn(y * w + x, cl * Math.cos(lon), sl, cl * Math.sin(lon)); }
+  }
+}
+function genFields(seed) {
+  const nE = makeNoise(seed), nM = makeNoise(seed + 101), nD = makeNoise(seed + 202), N = NW * NH;
+  const elev = new Float32Array(N), moist = new Float32Array(N), detail = new Float32Array(N), shade = new Float32Array(N);
+  sphereLoop(NW, NH, (i, x, y, z) => {
+    elev[i] = fbm(nE, x * 2.2 + 11, y * 2.2, z * 2.2, 6);
+    moist[i] = fbm(nM, x * 1.7, y * 1.7 + 5, z * 1.7, 4);
+    detail[i] = fbm(nD, x * 16, y * 16, z * 16, 3);
+  });
+  zscore(elev); zscore(moist); zscore(detail);
+  // hillshade: light from the north-west
+  for (let y = 0; y < NH; y++) for (let x = 0; x < NW; x++) {
+    const up = Math.max(0, y - 1) * NW, dn = Math.min(NH - 1, y + 1) * NW, l = (x + NW - 1) % NW, r = (x + 1) % NW;
+    shade[y * NW + x] = (elev[up + l] - elev[dn + r]) * 2.5;
+  }
+  return { seed, elev, moist, detail, shade };
+}
+function genClouds(seed) {
+  const n = makeNoise(seed + 500), wN = makeNoise(seed + 777), v = new Float32Array(CW * CH);
+  sphereLoop(CW, CH, (i, x, y, z) => {
+    const q = fbm(wN, x * 1.5, y * 1.5, z * 1.5, 3) * 1.6;
+    v[i] = fbm(n, x * 3 + q, y * 5 + q, z * 3 + q, 6);   // stretched along the latitude lines, like real cloud bands
+  });
+  zscore(v);
+  return { seed, v };
+}
+
+const R = { fields: null, landOk: false, landVer: 0, coastR: null, key: '', paintVer: 0, cloudField: null, cloudKey: '' };
+const realCanvas = mk(TW, TH), realCtx = ctx2(realCanvas);
+R.img = realCtx.createImageData(TW, TH);
+const maskCanvas = mk(TW, TH), blurCanvas = mk(TW, TH);
+const specCanvas = mk(NW, NH), bumpCanvas = mk(NW, NH);
+const cloudCanvas = mk(CW, CH), cloudView = mk(CW, CH);
+const wrapCanvas = mk(Math.round(TW * 12 / 360), TH);   // copy of the far-west strip, shown east of 180° where Russia's tip sits
+
+function geomChanged() { R.landOk = false; R.landVer++; }
+function shapePath(f, X, Y) {
+  const p = new Path2D(), polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
+  for (const dx of [0, -360]) for (const poly of polys) for (const ring of poly) { // second copy wraps land east of 180° to the left edge
+    ring.forEach(([x, y], i) => i ? p.lineTo(X(x + dx), Y(y)) : p.moveTo(X(x + dx), Y(y))); p.closePath();
+  }
+  return p;
+}
+function buildLand() {
+  const x = ctx2(maskCanvas), X = lon => (lon + 180) / 360 * TW, Y = lat => (90 - lat) / 180 * TH;
+  x.fillStyle = '#000'; x.fillRect(0, 0, TW, TH); x.fillStyle = '#fff';
+  for (const f of features) x.fill(shapePath(f, X, Y), 'evenodd');
+  R.mask = x.getImageData(0, 0, TW, TH).data;
+  R.inland = blurOf(36);
+  R.landOk = true; R.coastR = null;
+}
+function blurOf(px) {
+  const b = ctx2(blurCanvas);
+  b.filter = 'none'; b.fillStyle = '#000'; b.fillRect(0, 0, TW, TH);
+  b.filter = `blur(${px}px)`; b.drawImage(maskCanvas, 0, 0); b.filter = 'none';
+  return b.getImageData(0, 0, TW, TH).data;
+}
+const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const composeKey = () => JSON.stringify(view.terrain) + '|' + R.landVer + '|' + R.paintVer;
+
+function ensureReal() {
+  const T = view.terrain;
+  if (!R.fields || R.fields.seed !== T.seed) { R.fields = genFields(T.seed); R.key = ''; }
+  if (!R.landOk) { buildLand(); R.key = ''; }
+  const cr = Math.round(3 + T.shallows * 24);
+  if (R.coastR !== cr) { R.coast = blurOf(cr); R.coastR = cr; R.key = ''; }
+  const k = composeKey();
+  if (R.key === k) return false;
+  compose(); buildSpecBump(); R.key = k;
+  return true;
+}
+function compose(x0 = 0, y0 = 0, x1 = TW, y1 = TH) {
+  const T = view.terrain, F = R.fields, d = R.img.data, mask = R.mask, coastA = R.coast, inland = R.inland;
+  const col = [null, ...BIOMES.slice(1).map(b => hexRgb(T.colors[b[0]]))], deep = hexRgb(T.colors.deep), shal = hexRgb(T.colors.shallow), ice = col[ICE];
+  const El = F.elev, Mo = F.moist, De = F.detail, Sh = F.shade;
+  for (let y = y0; y < y1; y++) {
+    const lat = 90 - (y + .5) / TH * 180, la = Math.abs(lat), south = lat < 0 ? 4 : 0;
+    const dry = T.deserts * Math.exp(-(((la - 23) / 10) ** 2));   // the subtropical desert belts
+    let fy = (y + .5) * NH / TH - .5; fy = Math.max(0, Math.min(NH - 1, fy));
+    const yA = fy | 0, yB = Math.min(yA + 1, NH - 1), wy = fy - yA, rA = yA * NW, rB = yB * NW, prow = (y * PH / TH | 0) * PW;
+    for (let x = x0; x < x1; x++) {
+      const fx = (x + .5) * NW / TW - .5, xf = Math.floor(fx), wx = fx - xf, xA = (xf + NW) % NW, xB = (xA + 1) % NW;
+      const w00 = (1 - wx) * (1 - wy), w01 = wx * (1 - wy), w10 = (1 - wx) * wy, w11 = wx * wy;
+      const a = rA + xA, b = rA + xB, c = rB + xA, e = rB + xB;
+      let hh = Math.imul(x, 374761393) + Math.imul(y, 668265263); hh = Math.imul(hh ^ (hh >>> 13), 1274126177);
+      const grain = ((hh ^ (hh >>> 16)) & 1023) / 511.5 - 1;   // per-pixel grain breaks up hard terrain edges
+      const det = De[a] * w00 + De[b] * w01 + De[c] * w10 + De[e] * w11 + grain * .35;
+      const o = (y * TW + x) * 4, m = mask[o] / 255;
+      // water: deep to shallow towards the coast, sea ice near the poles
+      let k = Math.min(1, coastA[o] / 255 * 1.6); k = k * k * (3 - 2 * k);
+      const ov = 1 + det * .035;
+      let r = (deep[0] + (shal[0] - deep[0]) * k) * ov, g = (deep[1] + (shal[1] - deep[1]) * k) * ov, bl = (deep[2] + (shal[2] - deep[2]) * k) * ov;
+      if (T.seaIce < 90 && la + det * 2 > T.seaIce) { r = ice[0] * .93; g = ice[1] * .95; bl = ice[2] * .97; }
+      if (m > 0) {
+        const E = El[a] * w00 + El[b] * w01 + El[c] * w10 + El[e] * w11;
+        const S = Sh[a] * w00 + Sh[b] * w01 + Sh[c] * w10 + Sh[e] * w11;
+        let bio = paint[prow + (x * PW / TW | 0)];
+        if (!bio) {
+          const M = Mo[a] * w00 + Mo[b] * w01 + Mo[c] * w10 + Mo[e] * w11, inl = inland[o] / 255;
+          const effLat = la + south + Math.max(0, E) * 6 + det * 1.5;   // colder when high up or in the south
+          if (effLat > T.iceLat) bio = ICE;
+          else if (E > 2.3 - T.mountains * 1.6 && inl > .2) bio = effLat > T.iceLat - 18 ? ICE : ROCK;
+          else if (effLat > T.iceLat - 8) bio = TUNDRA;
+          else {
+            const w = M + T.green * 1.5 - dry * 2.4 - inl * T.deserts * 1.1 + det * .25 + .2;
+            if (w < -.8) bio = DESERT;
+            else if (w < -.25) bio = la < 32 ? SAVANNA : GRASS;
+            else if (la < 20) bio = w > .1 ? JUNGLE : SAVANNA;
+            else if (effLat > T.iceLat - 24) bio = TAIGA;
+            else bio = w > .25 ? FOREST : GRASS;
+          }
+        }
+        const cc = col[bio], v = (1 + det * .05 + grain * .025) * (1 + Math.max(-.5, Math.min(.5, S * .35)) * T.relief);
+        r += (cc[0] * v - r) * m; g += (cc[1] * v - g) * m; bl += (cc[2] * v - bl) * m;
+      }
+      d[o] = r; d[o + 1] = g; d[o + 2] = bl; d[o + 3] = 255;
+    }
+  }
+  realCtx.putImageData(R.img, 0, 0, x0, y0, x1 - x0, y1 - y0);
+  const w = ctx2(wrapCanvas); w.clearRect(0, 0, wrapCanvas.width, TH); w.drawImage(realCanvas, 0, 0, wrapCanvas.width, TH, 0, 0, wrapCanvas.width, TH);
+  if (G) G.dirty = true;
+}
+function buildSpecBump() {
+  const T = view.terrain, F = R.fields, sc = ctx2(specCanvas), bc = ctx2(bumpCanvas);
+  const si = sc.createImageData(NW, NH), bi = bc.createImageData(NW, NH);
+  for (let y = 0; y < NH; y++) {
+    const la = Math.abs(90 - (y + .5) / NH * 180);
+    for (let x = 0; x < NW; x++) {
+      const i = y * NW + x, o = i * 4, mo = (2 * y * TW + 2 * x) * 4, land = R.mask[mo] > 127;
+      const sea = !land && !(T.seaIce < 90 && la > T.seaIce);
+      si.data[o] = si.data[o + 1] = si.data[o + 2] = sea ? 255 : 0; si.data[o + 3] = 255;
+      bi.data[o] = bi.data[o + 1] = bi.data[o + 2] = land ? Math.max(0, Math.min(255, 95 + F.elev[i] * 35 + R.inland[mo] * .3)) : 80; bi.data[o + 3] = 255;
+    }
+  }
+  sc.putImageData(si, 0, 0); bc.putImageData(bi, 0, 0);
+  // soften both maps so coasts don't catch the light as jagged steps on the globe
+  for (const [c, x] of [[specCanvas, sc], [bumpCanvas, bc]]) { const tmp = mk(NW, NH), tx = tmp.getContext('2d'); tx.drawImage(c, 0, 0); x.filter = 'blur(1.5px)'; x.drawImage(tmp, 0, 0); x.filter = 'none'; }
+  if (G) { G.specTex.needsUpdate = true; G.bumpTex.needsUpdate = true; }
+}
+function ensureClouds() {
+  const C = view.clouds, key = C.seed + '|' + C.cover + '|' + C.opacity;
+  if (R.cloudKey === key) return;
+  if (!R.cloudField || R.cloudField.seed !== C.seed) R.cloudField = genClouds(C.seed);
+  const f = R.cloudField.v, x = ctx2(cloudCanvas), img = x.createImageData(CW, CH), d = img.data;
+  const t = 1.6 - C.cover * 2.6;   // z-score above which sky is cloudy
+  for (let i = 0; i < f.length; i++) {
+    let a = (f[i] - t) / 1.7; a = a < 0 ? 0 : a > 1 ? 1 : a * a * (3 - 2 * a);
+    const o = i * 4; d[o] = d[o + 1] = d[o + 2] = 255 * (.84 + .16 * a); d[o + 3] = a * C.opacity * 255;
+  }
+  x.putImageData(img, 0, 0); R.cloudKey = key; R.cloudDrawn = -1;
+  if (G) G.cloudTex.needsUpdate = true;
+}
+
+/* ---------- realistic overlays on the 2D map ---------- */
+const realOv = new CanvasOverlay(realCanvas, [[-90, -180], [90, 180]], { pane: 'terrain' });
+const wrapOv = new CanvasOverlay(wrapCanvas, [[-90, 180], [90, 192]], { pane: 'terrain' });
+const cloudOv = new CanvasOverlay(cloudView, [[-90, -180], [90, 180]], { pane: 'cloudsPane' });
+let cloudLon = 0;
+function drawCloudView() {
+  const x = ctx2(cloudView), off = ((cloudLon / 360 * CW) % CW + CW) % CW;
+  x.clearRect(0, 0, CW, CH); x.drawImage(cloudCanvas, off, 0); x.drawImage(cloudCanvas, off - CW, 0);
+  R.cloudDrawn = cloudLon;
+}
+function sync2D() {
+  const real = view.dim === '2d' && isReal(), clouds = real && view.clouds.on;
+  for (const ov of [realOv, wrapOv]) if (real !== map.hasLayer(ov)) real ? ov.addTo(map) : ov.remove();
+  if (clouds !== map.hasLayer(cloudOv)) clouds ? cloudOv.addTo(map) : cloudOv.remove();
+  if (clouds) drawCloudView();
+}
+
+/* ---------- 3D globe ---------- */
+let G = null;
+const dirVec = (lat, lon) => new THREE.Vector3(Math.cos(lat * D2R) * Math.cos(lon * D2R), Math.sin(lat * D2R), -Math.cos(lat * D2R) * Math.sin(lon * D2R));
+function ensureGlobe() {
+  if (G) return G;
+  if (!window.THREE) { toast('The 3D viewer could not load. Check your connection and reload the page.'); return null; }
+  try {
+    const host = $('globe');
+    const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    host.append(renderer.domElement);
+    const scene = new THREE.Scene(); scene.background = new THREE.Color();
+    const camera = new THREE.PerspectiveCamera(40, 1, .05, 200);
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    Object.assign(controls, { enableDamping: true, dampingFactor: .08, enablePan: false, minDistance: 1.15, maxDistance: 8, rotateSpeed: .5, zoomSpeed: .7 });
+    const size = Math.min(4096, renderer.capabilities.maxTextureSize);
+    const canvas = mk(size, size / 2);
+    const tex = c => { const t = new THREE.CanvasTexture(c); t.anisotropy = renderer.capabilities.getMaxAnisotropy(); return t; };
+    const mapTex = tex(canvas); mapTex.encoding = THREE.sRGBEncoding;
+    const specTex = tex(specCanvas), bumpTex = tex(bumpCanvas), cloudTex = tex(cloudCanvas); cloudTex.encoding = THREE.sRGBEncoding;
+    const mat = new THREE.MeshPhongMaterial({ map: mapTex, specular: new THREE.Color(0), shininess: 25 });
+    const earth = new THREE.Mesh(new THREE.SphereGeometry(1, 192, 96), mat);
+    const clouds = new THREE.Mesh(new THREE.SphereGeometry(1.012, 128, 64), new THREE.MeshLambertMaterial({ map: cloudTex, transparent: true, depthWrite: false }));
+    const glow = { value: new THREE.Color() };
+    const vs = 'varying vec3 vN; void main(){ vN = normalize(normalMatrix * normal); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }';
+    // outer halo (seen from behind) and a thin haze on the planet's rim
+    const atmo = new THREE.Mesh(new THREE.SphereGeometry(1.13, 96, 48), new THREE.ShaderMaterial({ uniforms: { glow }, vertexShader: vs,
+      fragmentShader: 'uniform vec3 glow; varying vec3 vN; void main(){ float i = pow(max(0.0, -vN.z), 1.6) * 1.5; gl_FragColor = vec4(glow * i, 1.0); }',
+      side: THREE.BackSide, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false }));
+    const haze = new THREE.Mesh(new THREE.SphereGeometry(1.016, 96, 48), new THREE.ShaderMaterial({ uniforms: { glow }, vertexShader: vs,
+      fragmentShader: 'uniform vec3 glow; varying vec3 vN; void main(){ float i = pow(1.0 - max(0.0, vN.z), 3.5) * 0.9; gl_FragColor = vec4(glow * i, 1.0); }',
+      blending: THREE.AdditiveBlending, transparent: true, depthWrite: false }));
+    const pos = new Float32Array(4000 * 3);
+    for (let i = 0; i < 4000; i++) { const v = new THREE.Vector3().randomDirection ? new THREE.Vector3().randomDirection() : new THREE.Vector3(Math.random() - .5, Math.random() - .5, Math.random() - .5).normalize(); v.multiplyScalar(60 + Math.random() * 30).toArray(pos, i * 3); }
+    const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const stars = new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xffffff, size: .16, transparent: true, opacity: .85 }));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.25), amb = new THREE.AmbientLight(0xffffff, .1);
+    scene.add(earth, clouds, haze, atmo, stars, sun, amb);
+    G = { renderer, scene, camera, controls, canvas, mapTex, specTex, bumpTex, cloudTex, mat, earth, clouds, atmo, haze, glow, stars, sun, amb, key: '', dirty: true };
+    new ResizeObserver(() => {
+      const w = host.clientWidth, h = host.clientHeight; if (!w || !h) return;
+      renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+    }).observe(host);
+    resetCamera();
+    return G;
+  } catch (err) { console.error(err); toast('3D needs WebGL, which is turned off or unsupported in this browser.'); G = null; return null; }
+}
+function resetCamera() { if (!G) return; G.camera.position.copy(dirVec(20, 15).multiplyScalar(3.3)); G.controls.target.set(0, 0, 0); G.controls.update(); }
+function applyGlobeSettings() {
+  if (!G) return;
+  const g = view.globe, real = isReal(), m = G.mat;
+  G.controls.autoRotate = g.spin; G.controls.autoRotateSpeed = g.spinSpeed * 2.5;
+  G.sun.position.copy(dirVec(g.sunLat, g.sunLon).multiplyScalar(5));
+  G.sun.intensity = g.shading ? 1.3 : 0; G.amb.intensity = g.shading ? .1 : 1;
+  G.atmo.visible = G.haze.visible = g.atmo; G.glow.value.set(g.atmoColor);
+  G.stars.visible = g.stars; G.scene.background.set(g.space); $('globe').style.background = g.space;
+  G.clouds.visible = view.clouds.on;
+  const wantSpec = real ? G.specTex : null, wantBump = real ? G.bumpTex : null;
+  if (m.specularMap !== wantSpec || m.bumpMap !== wantBump) { m.specularMap = wantSpec; m.bumpMap = wantBump; m.needsUpdate = true; }
+  m.specular.setScalar(real ? g.shine * .7 : 0); m.shininess = 10 + g.shine * 40; m.bumpScale = view.terrain.relief * .045;
+}
+function updateGlobeTexture() {
+  const key = [current, R.key, view.style, view.earth, view.names, view.borders, JSON.stringify(view.custom)].join('|');
+  if (!G.dirty && G.key === key) return;
+  const c = G.canvas, x = c.getContext('2d'), W = c.width, H = c.height;
+  if (isReal()) { x.drawImage(realCanvas, 0, 0, W, H); drawVectors(x, W, H, { base: false }); }
+  else drawVectors(x, W, H, { base: true });
+  G.mapTex.needsUpdate = true; G.key = key; G.dirty = false;
+}
+
+/* ---------- drawing the map onto a canvas (globe texture and PNG export) ---------- */
+function drawVectors(ctx, W, H, { base }) {
+  const st = eff(), s = simple(), k = W / 4096;
+  const X = lon => (lon + 180) / 360 * W, Y = lat => (90 - lat) / 180 * H;
+  const paths = features.map(f => [f, shapePath(f, X, Y)]);
+  ctx.lineJoin = 'round';
+  if (base) {
+    ctx.fillStyle = st.ocean; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = st.grat; ctx.lineWidth = 1.5 * k; ctx.beginPath();
+    for (let lon = -150; lon < 180; lon += 30) { ctx.moveTo(X(lon), 0); ctx.lineTo(X(lon), H); }
+    for (let lat = -60; lat <= 60; lat += 30) { ctx.moveTo(0, Y(lat)); ctx.lineTo(W, Y(lat)); }
+    ctx.stroke();
+    if (s) {
+      ctx.strokeStyle = st.stroke; ctx.lineWidth = 4 * k; paths.forEach(([, p]) => ctx.stroke(p));
+      ctx.fillStyle = ctx.strokeStyle = st.land; ctx.lineWidth = 1.5 * k; paths.forEach(([, p]) => { ctx.fill(p, 'evenodd'); ctx.stroke(p); });
+    } else for (const [f, p] of paths) {
+      ctx.globalAlpha = st.opacity ?? 1; ctx.fillStyle = st.fill === 'mono' ? st.land : f.properties.color; ctx.fill(p, 'evenodd');
+    }
+    ctx.globalAlpha = 1;
+  }
+  if (s) return;
+  if (view.borders) {
+    ctx.globalAlpha = st.strokeOpacity ?? 1; ctx.strokeStyle = st.stroke; ctx.lineWidth = 1.2 * k;
+    ctx.setLineDash(st.dash ? st.dash.split(' ').map(n => n * 1.5 * k) : []);
+    paths.forEach(([, p]) => ctx.stroke(p));
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+  }
+  if (view.names) {
+    ctx.font = `600 ${16 * k}px "Barlow Condensed", "Arial Narrow", sans-serif`; ctx.letterSpacing = `${1.5 * k}px`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineWidth = 4 * k; ctx.strokeStyle = st.halo; ctx.fillStyle = st.text;
+    for (const f of features) {
+      if (turf.area(f) < 5e10) continue; // same rule as the map: small countries only get labels when zoomed in
+      let pt; try { pt = labelPoint(f); } catch { continue; }
+      const lines = []; let line = '';
+      for (const w of f.properties.name.toUpperCase().split(/\s+/)) { const t = line ? line + ' ' + w : w; if (line && ctx.measureText(t).width > 140 * k) { lines.push(line); line = w; } else line = t; }
+      lines.push(line);
+      lines.forEach((l, i) => { const y = Y(pt[1]) + (i - (lines.length - 1) / 2) * 17 * k; ctx.strokeText(l, X(pt[0]), y); ctx.fillText(l, X(pt[0]), y); });
+    }
+    ctx.letterSpacing = '0px';
+  }
+}
+
+/* ---------- keeping textures in step with the map ---------- */
+let visT, visRunning = false;
+function scheduleVisuals() { clearTimeout(visT); visT = setTimeout(runVisuals, 90); }
+async function runVisuals() {
+  if (visRunning) return scheduleVisuals();
+  visRunning = true;
+  try {
+    const real = isReal(), is3d = view.dim === '3d';
+    const slow = (real && (!R.fields || R.fields.seed !== view.terrain.seed)) || (view.clouds.on && (real || is3d) && (!R.cloudField || R.cloudField.seed !== view.clouds.seed));
+    if (slow) { $('busy').hidden = false; await new Promise(r => setTimeout(r, 30)); }
+    if (real) ensureReal();
+    if (view.clouds.on && (real || is3d)) ensureClouds();
+    sync2D();
+    if (is3d && ensureGlobe()) { updateGlobeTexture(); applyGlobeSettings(); }
+  } catch (err) { console.error(err); toast('Something went wrong drawing the map. Try another setting or reload the page.'); }
+  finally { $('busy').hidden = true; visRunning = false; }
+}
+let lastT = performance.now();
+function tick(now) {
+  requestAnimationFrame(tick);
+  const dt = Math.min(.1, (now - lastT) / 1000); lastT = now;
+  const C = view.clouds;
+  if (C.on && C.move) cloudLon = (cloudLon + dt * (.3 + C.speed * 6)) % 360;
+  if (view.dim === '3d' && G) {
+    G.clouds.rotation.y = cloudLon * D2R;
+    G.controls.update(); G.renderer.render(G.scene, G.camera);
+  } else if (map.hasLayer(cloudOv) && R.cloudDrawn !== cloudLon && now - (tick.last2d || 0) > 50) { tick.last2d = now; drawCloudView(); }
+}
+requestAnimationFrame(tick);
+
+/* ---------- terrain painting ---------- */
+let brush = { id: FOREST, size: 4 }, painting = false;
+const brushRing = L.polygon([], { className: 'brush', interactive: false, pmIgnore: true });
+function ringAt(ll) { const pts = []; for (let i = 0; i < 40; i++) { const a = i / 40 * Math.PI * 2; pts.push([ll.lat + Math.sin(a) * brush.size, ll.lng + Math.cos(a) * brush.size]); } return pts; }
+function paintAt(ll) {
+  let lng = ll.lng; if (lng > 180) lng -= 360;
+  const cx = (lng + 180) / 360 * PW, cy = (90 - ll.lat) / 180 * PH, r = brush.size / 360 * PW;
+  const x0 = Math.floor(cx - r), x1 = Math.ceil(cx + r), y0 = Math.max(0, Math.floor(cy - r)), y1 = Math.min(PH - 1, Math.ceil(cy + r));
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if ((x - cx) ** 2 + (y - cy) ** 2 <= r * r) paint[y * PW + (x + PW) % PW] = brush.id;
+  R.paintVer++;
+  const sx = TW / PW, sy = TH / PH;
+  if (x0 < 0 || x1 >= PW) compose(0, y0 * sy, TW, (y1 + 1) * sy);
+  else compose(x0 * sx, y0 * sy, (x1 + 1) * sx, (y1 + 1) * sy);
+  R.key = composeKey();
+}
+map.on('mousedown', e => {
+  if (mode !== 'paint') return;
+  if (!isReal()) return;
+  if (!R.landOk || !R.fields) return toast('The terrain is still being built. Try again in a moment.');
+  painting = true; paintAt(e.latlng);
+});
+map.on('mousemove', e => {
+  if (mode !== 'paint') return;
+  brushRing.setLatLngs(ringAt(e.latlng)); if (!map.hasLayer(brushRing)) brushRing.addTo(map);
+  if (painting) paintAt(e.latlng);
+});
+map.on('mouseout', () => brushRing.remove());
+document.addEventListener('mouseup', () => { if (painting) { painting = false; commit(); } });
+
+/* ---------- view: mode, style and settings ---------- */
+function saveView() { try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)); } catch {} }
+function applyView() {
+  const st = eff(), w = $('mapwrap').style, real = isReal(), is3d = view.dim === '3d';
+  w.setProperty('--ocean', st.ocean); w.setProperty('--mstroke', st.stroke); w.setProperty('--mtext', st.text);
+  w.setProperty('--mhalo', st.halo); w.setProperty('--grat', st.grat);
+  document.querySelectorAll('[data-only],[data-dim]:not(#dim button),[data-real],[data-clouds]').forEach(el => {
+    const d = el.dataset;
+    el.hidden = !!((d.only && d.only !== view.earth) || (d.dim && d.dim !== view.dim) || (d.real && (d.real === 'yes') !== real) || ('clouds' in d && !(real || is3d)));
+  });
+  document.querySelectorAll('#earth button').forEach(b => b.setAttribute('aria-pressed', b.dataset.earth === view.earth));
+  document.querySelectorAll('#dim button').forEach(b => b.setAttribute('aria-pressed', b.dataset.dim === view.dim));
+  document.querySelectorAll('#styles button').forEach(b => b.setAttribute('aria-pressed', b.dataset.style === view.style));
+  $('names').checked = view.names; $('borders').checked = view.borders;
+  document.querySelector('[data-mode="edit"]').textContent = simple() ? 'Edit coastline' : 'Edit border';
+  if (simple() && ['annex', 'newc'].includes(mode) || !simple() && mode === 'addland' || is3d) mode = 'select';
+  $('map').hidden = is3d; $('globe').hidden = !is3d; $('coords').hidden = is3d;
+  buildCustomColors();
+  if (!is3d) { map.invalidateSize(); render(); }
+  saveView(); setMode(mode); scheduleVisuals();
+}
+
+// generic settings controls: [group, key, label, min, max, step, format]
+const pct = v => Math.round(v * 100) + '%', deg = v => (+v).toFixed(Math.abs(v) % 1 ? 1 : 0) + '°';
+const SLIDERS = {
+  terrainSliders: [
+    ['terrain', 'iceLat', 'Ice caps start at', 45, 90, 1, v => v >= 90 ? 'none' : v + '°'],
+    ['terrain', 'seaIce', 'Sea ice starts at', 50, 90, 1, v => v >= 90 ? 'none' : v + '°'],
+    ['terrain', 'deserts', 'Deserts', 0, 1, .05, pct],
+    ['terrain', 'green', 'Greenery', -1, 1, .05, v => (v > 0 ? '+' : '') + Math.round(v * 100) + '%'],
+    ['terrain', 'mountains', 'Mountains', 0, 1, .05, pct],
+    ['terrain', 'relief', 'Relief shading', 0, 1, .05, pct],
+    ['terrain', 'shallows', 'Coastal shallows', 0, 1, .05, pct],
+  ],
+  cloudSliders: [['clouds', 'cover', 'Cloud cover', 0, 1, .05, pct], ['clouds', 'opacity', 'Thickness', .1, 1, .05, pct], ['clouds', 'speed', 'Wind speed', 0, 1, .05, pct]],
+  globeSliders: [
+    ['globe', 'spinSpeed', 'Spin speed', 0, 1, .05, pct], ['globe', 'sunLon', 'Sun position', -180, 180, 5, deg],
+    ['globe', 'sunLat', 'Season (sun latitude)', -23.5, 23.5, .5, deg], ['globe', 'shine', 'Water shine', 0, 1, .05, pct]],
+};
+const CHECKS = {
+  cloudChecks: [['clouds', 'on', 'Show clouds'], ['clouds', 'move', 'Move clouds']],
+  globeChecks: [['globe', 'spin', 'Spin'], ['globe', 'shading', 'Day and night'], ['globe', 'atmo', 'Atmosphere'], ['globe', 'stars', 'Stars']],
+};
+for (const [box, list] of Object.entries(SLIDERS)) $(box).innerHTML = list.map(([g, k, label, min, max, step]) =>
+  `<label class="sl" for="${g}-${k}">${label}<output id="${g}-${k}-out"></output><input type="range" id="${g}-${k}" data-g="${g}" data-k="${k}" min="${min}" max="${max}" step="${step}"></label>`).join('');
+for (const [box, list] of Object.entries(CHECKS)) $(box).innerHTML = list.map(([g, k, label]) =>
+  `<label class="check"><input type="checkbox" id="${g}-${k}" data-g="${g}" data-k="${k}"> ${label}</label>`).join('');
+$('terrainColors').innerHTML = [['deep', 'Deep water'], ['shallow', 'Shallow water'], ...BIOMES.slice(1)].map(([k, label]) =>
+  `<label><input type="color" id="tc-${k}" data-g="tcolor" data-k="${k}"> ${label}</label>`).join('');
+$('globeColors').innerHTML = [['atmoColor', 'Atmosphere'], ['space', 'Space']].map(([k, label]) =>
+  `<label><input type="color" id="globe-${k}" data-g="globe" data-k="${k}"> ${label}</label>`).join('');
+$('brushSize').innerHTML = `<label class="sl" for="brushSizeIn">Brush size<output id="brushSizeOut"></output><input type="range" id="brushSizeIn" min=".5" max="15" step=".5"></label>`;
+function buildCustomColors() {
+  const st = eff(), keys = isReal() ? [['stroke', 'Borders'], ['text', 'Names']] : [['ocean', 'Ocean'], ['land', 'Land (single-colour styles)'], ['stroke', 'Borders'], ['text', 'Names']];
+  $('customColors').innerHTML = keys.map(([k, label]) => `<label><input type="color" id="cc-${k}" data-g="custom" data-k="${k}" value="${st[k]}"> ${label}</label>`).join('');
+}
+function renderBrushes() {
+  const C = view.terrain.colors;
+  $('brushes').innerHTML = [[0, 'Auto', null], ...BIOMES.slice(1).map((b, i) => [i + 1, b[1], C[b[0]]])].map(([id, label, c]) =>
+    `<button data-brush="${id}" aria-pressed="${brush.id === id}"><span class="sw" style="background:${c || 'repeating-linear-gradient(45deg,#999 0 3px,transparent 3px 6px)'}"></span>${label}</button>`).join('');
+  $('brushSizeIn').value = brush.size; $('brushSizeOut').textContent = brush.size + '°';
+}
+function syncControls() {
+  for (const list of Object.values(SLIDERS)) for (const [g, k, , , , , fmt] of list) { $(`${g}-${k}`).value = view[g][k]; $(`${g}-${k}-out`).textContent = fmt(view[g][k]); }
+  for (const list of Object.values(CHECKS)) for (const [g, k] of list) $(`${g}-${k}`).checked = view[g][k];
+  for (const k of Object.keys(view.terrain.colors)) $('tc-' + k).value = view.terrain.colors[k];
+  $('globe-atmoColor').value = view.globe.atmoColor; $('globe-space').value = view.globe.space;
+  $('seedOut').textContent = 'terrain #' + view.terrain.seed;
+  renderBrushes();
+}
+$('aside').addEventListener('input', e => {
+  const el = e.target, { g, k } = el.dataset;
+  if (!g) return;
+  if (g === 'custom') { (view.custom[view.style] ||= {})[k] = el.value; saveView(); return applyStyleColors(); }
+  if (g === 'tcolor') { view.terrain.colors[k] = el.value; renderBrushes(); }
+  else view[g][k] = el.type === 'checkbox' ? el.checked : el.type === 'range' ? +el.value : el.value;
+  const out = $(`${g}-${k}-out`); if (out) out.textContent = Object.values(SLIDERS).flat().find(s => s[0] === g && s[1] === k)[6](view[g][k]);
+  saveView();
+  if (g === 'globe') applyGlobeSettings();
+  if (g === 'clouds' && k === 'on') applyView(); else scheduleVisuals();
+});
+let colorT;
+function applyStyleColors() { clearTimeout(colorT); colorT = setTimeout(() => applyView(), 60); }
+$('cReset').onclick = () => { delete view.custom[view.style]; applyView(); };
+$('styles').innerHTML = Object.entries(STYLES).map(([k, s]) =>
+  `<button data-style="${k}" title="${s.name}"><span class="swatch" style="background:${s.fill === 'real' ? 'linear-gradient(90deg,#0b2c4f,#1d7391)' : s.ocean}"><i style="background:${s.fill === 'real' ? 'linear-gradient(135deg,#3e6b34,#dcc391 60%,#eef3f6)' : s.fill === 'mono' ? s.land : '#e9c37f'};border-color:${s.fill === 'real' ? 'transparent' : s.stroke}"></i></span>${s.name}</button>`).join('');
+$('styles').onclick = e => { const b = e.target.closest('[data-style]'); if (b) { view.style = b.dataset.style; applyView(); } };
+$('earth').onclick = e => { const b = e.target.closest('[data-earth]'); if (b && b.dataset.earth !== view.earth) { view.earth = b.dataset.earth; selected.clear(); applyView(); } };
+$('dim').onclick = e => { const b = e.target.closest('[data-dim]'); if (b && b.dataset.dim !== view.dim) { view.dim = b.dataset.dim; applyView(); } };
+$('names').onchange = () => { view.names = $('names').checked; applyView(); };
+$('borders').onchange = () => { view.borders = $('borders').checked; applyView(); };
+$('brushes').onclick = e => { const b = e.target.closest('[data-brush]'); if (!b) return; brush.id = +b.dataset.brush; renderBrushes(); if (mode !== 'paint') setMode('paint'); };
+$('brushSizeIn').oninput = () => { brush.size = +$('brushSizeIn').value; $('brushSizeOut').textContent = brush.size + '°'; };
+$('paintBtn').onclick = () => setMode(mode === 'paint' ? 'select' : 'paint');
+$('clearPaint').onclick = () => { paint.fill(0); R.paintVer++; commit(); toast('Painting cleared. Undo brings it back.'); };
+$('newTerrain').onclick = () => { view.terrain.seed = 1 + (Math.random() * 99999 | 0); saveView(); syncControls(); scheduleVisuals(); };
+$('newClouds').onclick = () => { view.clouds.seed = 1 + (Math.random() * 99999 | 0); saveView(); scheduleVisuals(); };
+$('tReset').onclick = () => { view.terrain = clone(DEFAULTS.terrain); saveView(); syncControls(); scheduleVisuals(); };
+$('gReset').onclick = () => { view.globe = clone(DEFAULTS.globe); saveView(); syncControls(); applyView(); };
+$('resetCam').onclick = resetCamera;
+
+/* ---------- tools ---------- */
+const accent = () => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#b3164f';
+const MODE_TEXT = {
+  select: () => simple() ? 'Click land to select it. Shift-click to select several.' : 'Click a country to select it. Shift-click to select several.',
+  edit: () => 'Drag the white points to move the outline. Points snap to nearby edges.',
+  annex: () => 'Click to draw the area the selected country takes over. Click the first point to finish.',
+  newc: () => 'Click to draw the new country. It takes all land inside the shape. Click the first point to finish.',
+  addland: () => 'Click to draw new land in the sea. Click the first point to finish.',
+  erase: () => 'Click to draw an area of land that becomes sea. Click the first point to finish.',
+  paint: () => `Drag over land to paint ${brush.id ? BIOMES[brush.id][1].toLowerCase() : 'automatic terrain'}. Change the terrain and brush size in the side panel.`,
+};
+function setMode(m) {
+  if (view.dim === '3d') {
+    map.pm.disableDraw(); disableEdit(); map.dragging.enable(); brushRing.remove();
+    mode = 'select';
+    $('modebar').innerHTML = '<b>3D globe</b> · Drag to turn the globe, scroll or pinch to zoom. Switch to 2D map to edit.';
+    return;
+  }
+  if (m === 'annex' && selected.size !== 1) return toast('Select one country first, then draw the area it should take.');
+  if (m === 'edit' && !selected.size) return toast(simple() ? 'Select some land first, then edit its coastline.' : 'Select a country first, then edit its border.');
+  if (m === 'paint' && !isReal()) { view.style = 'realistic'; mode = m; toast('Switched to the Realistic style so you can see the terrain you paint.'); return applyView(); }
+  map.pm.disableDraw(); disableEdit();
+  const was = mode; mode = m;
+  if (['annex', 'newc', 'erase', 'addland'].includes(m)) {
+    const c = m === 'erase' ? '#2b6c86' : accent();
+    map.pm.enableDraw('Polygon', { snappable: true, snapDistance: 14, continueDrawing: true, allowSelfIntersection: false,
+      templineStyle: { color: c }, hintlineStyle: { color: c, dashArray: [5, 5] }, pathOptions: { color: c, fillOpacity: .15 } });
+  }
+  if (m === 'edit') enableEdit();
+  if (was === 'edit' && m !== 'edit') render(); // re-place labels after vertex moves
+  m === 'paint' ? map.dragging.disable() : map.dragging.enable();
+  $('map').classList.toggle('painting', m === 'paint');
+  if (m !== 'paint') brushRing.remove();
+  $('paintBtn').textContent = m === 'paint' ? 'Stop painting' : 'Paint terrain';
+  document.querySelectorAll('#modes button').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === m));
+  $('modebar').innerHTML = `<b>${document.querySelector(`[data-mode="${m}"]`).textContent}</b> · ${MODE_TEXT[m]()}${m !== 'select' ? ' Press Esc to stop.' : ''}`;
+}
+function enableEdit() { selected.forEach(id => layerById.get(id)?.pm.enable({ snappable: true, snapDistance: 14 })); }
+function disableEdit() { layerById.forEach(l => l.pm.enabled() && l.pm.disable()); }
+
+const fc = (...fs) => turf.featureCollection(fs);
+const bboxHit = (a, b) => a[0] <= b[2] && a[2] >= b[0] && a[1] <= b[3] && a[3] >= b[1];
+
+map.on('pm:create', ({ layer }) => {
+  const drawn = layer.toGeoJSON(); map.removeLayer(layer);
+  try { applyDrawing(mode, drawn); }
+  catch (err) { console.error(err); toast('That shape could not be applied. Try drawing it again with fewer crossing lines.'); }
+});
+function newFeature(name, geometry, avoid = []) {
+  const used = new Set(avoid);
+  const color = PALETTE.find(c => !used.has(c)) ?? PALETTE[nextId % PALETTE.length];
+  const nf = { type: 'Feature', id: 'n' + nextId++, properties: { name, color }, geometry };
+  features.push(nf); selected = new Set([nf.id]);
+}
+function applyDrawing(m, drawn) {
+  const bb = turf.bbox(drawn);
+  const target = m === 'annex' ? byId([...selected][0]) : null;
+  // ponytail: bbox prefilter + exact clip per shape; fine for a few hundred shapes
+  const hits = features.filter(f => f !== target && bboxHit(turf.bbox(f), bb)).map(f => ({ f, part: turf.intersect(fc(f, drawn)) })).filter(h => h.part);
+  if (m === 'erase') {
+    if (!hits.length) return toast('No land inside that shape.');
+    for (const { f } of hits) f.geometry = turf.difference(fc(f, drawn))?.geometry ?? null;
+  } else if (m === 'addland') {
+    // only the sea part of the shape becomes new land; existing land stays as it is
+    let region = drawn;
+    for (const { f } of hits) { region = turf.difference(fc(region, f)); if (!region) return toast('That area is already land.'); }
+    newFeature('New land', region.geometry, hits.map(h => h.f.properties.color));
+  } else {
+    // take the land under the shape; over open sea, the whole shape becomes new land
+    const region = hits.length ? (hits.length === 1 ? hits[0].part : turf.union(fc(...hits.map(h => h.part)))) : drawn;
+    for (const { f } of hits) f.geometry = turf.difference(fc(f, region))?.geometry ?? null;
+    if (target) target.geometry = turf.union(fc(target, region)).geometry;
+    else newFeature('New nation', region.geometry, hits.map(h => h.f.properties.color));
+  }
+  const gone = features.filter(f => !f.geometry).map(f => f.properties.name);
+  features = features.filter(f => f.geometry);
+  selected = new Set([...selected].filter(byId));
+  geomChanged(); render(); commit();
+  if (gone.length && !simple()) toast(`${gone.join(', ')} ${gone.length > 1 ? 'were' : 'was'} absorbed completely.`);
+  if (m === 'newc') setTimeout(() => $('nameIn')?.select(), 0);
+}
+function mergeSelected() {
+  const fs = [...selected].map(byId);
+  if (fs.length < 2) return;
+  try {
+    fs[0].geometry = turf.union(fc(...fs)).geometry;
+    features = features.filter(f => !fs.slice(1).includes(f));
+    selected = new Set([fs[0].id]);
+    geomChanged(); render(); commit(); toast(`Merged into ${fs[0].properties.name}.`);
+  } catch (err) { console.error(err); toast('Those shapes could not be merged.'); }
+}
+function deleteSelected() {
+  if (!selected.size) return;
+  const n = selected.size;
+  features = features.filter(f => !selected.has(f.id)); selected.clear();
+  if (mode === 'edit' || mode === 'annex') setMode('select');
+  geomChanged(); render(); commit(); toast(`Removed ${n} ${n > 1 ? 'shapes' : 'shape'}. Undo brings ${n > 1 ? 'them' : 'it'} back.`);
+}
+
+/* ---------- panel ---------- */
+const esc = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const km2 = fs => Math.round(fs.reduce((s, f) => s + turf.area(f), 0) / 1e6).toLocaleString('en-US');
+function updatePanel() {
+  const fs = [...selected].map(byId).filter(Boolean);
+  const fill = STYLES[view.style].fill;
+  const multi = `<label class="check"><input type="checkbox" id="multi"${$('multi')?.checked ? ' checked' : ''}> Add to selection when I click (same as Shift-click)</label>`;
+  const colorNote = fill !== 'color' ? `<p class="hint">This style doesn't show country colours. Pick Political or Vintage to see them.</p>` : '';
+  let h;
+  if (simple()) {
+    h = !fs.length ? `<p class="hint">Click land to select it, then edit its coastline or delete it. Use Add land and Flood land to reshape the continents.</p>`
+      : `<span class="stat">${km2(fs)} km² selected</span><div class="row"><button data-go="edit">Edit coastline</button><button data-go="del">Delete</button></div>`;
+  } else if (!fs.length) h = `<p class="hint">Click a country on the map to rename it, recolour it or change its borders.</p>`;
+  else if (fs.length === 1) {
+    const f = fs[0];
+    h = `<label class="f">Name<input type="text" id="nameIn" maxlength="60" value="${esc(f.properties.name)}"></label>
+      <div class="row"><input type="color" id="colorIn" value="${f.properties.color}" aria-label="Colour"><span class="stat">${km2(fs)} km²</span></div>${colorNote}
+      <div class="row"><button data-go="edit">Edit border</button><button data-go="annex">Annex area</button></div>`;
+  } else {
+    h = `<div class="chips">${fs.map(f => `<span class="chip"><span class="sw" style="background:${f.properties.color}"></span>${esc(f.properties.name)}</span>`).join('')}</div>
+      <div class="row"><input type="color" id="colorIn" value="${fs[0].properties.color}" aria-label="Colour for all selected"><span class="stat">${km2(fs)} km² total</span></div>${colorNote}
+      <div class="row"><button class="primary" id="merge2">Merge ${fs.length} countries</button></div>`;
+  }
+  $('sel').innerHTML = h + multi;
+  const name = $('nameIn'), color = $('colorIn');
+  if (name) {
+    name.oninput = () => { fs[0].properties.name = name.value || 'Unnamed'; };
+    name.onchange = () => { render(); commit(); };
+    name.onkeydown = e => { if (e.key === 'Enter') name.blur(); };
+  }
+  if (color) {
+    color.oninput = () => fs.forEach(f => { f.properties.color = color.value; if (fill === 'color') layerById.get(f.id)?.setStyle({ fillColor: color.value }); });
+    color.onchange = () => commit();
+  }
+  $('merge2')?.addEventListener('click', mergeSelected);
+  $('sel').querySelectorAll('[data-go]').forEach(b => b.onclick = () => b.dataset.go === 'del' ? deleteSelected() : setMode(b.dataset.go));
+}
+function updateButtons() {
+  $('merge').disabled = selected.size < 2; $('del').disabled = !selected.size;
+  $('undo').disabled = !undoStack.length; $('redo').disabled = !redoStack.length;
+}
+function search() {
+  const q = $('search').value.trim().toLowerCase();
+  const hits = q ? features.filter(f => f.properties.name.toLowerCase().includes(q)).slice(0, 8) : [];
+  $('results').innerHTML = hits.map(f => `<li><button data-id="${esc(f.id)}"><span class="sw" style="background:${f.properties.color}"></span>${esc(f.properties.name)}</button></li>`).join('');
+  $('results').querySelectorAll('button').forEach(b => b.onclick = () => {
+    pick(b.dataset.id, false); map.fitBounds(layerById.get(b.dataset.id).getBounds(), { maxZoom: 5, padding: [40, 40] });
+  });
+}
+let toastT;
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 3500); }
+
+/* ---------- PNG export ---------- */
+async function exportPng() {
+  try { await document.fonts.load('600 16px "Barlow Condensed"'); } catch {}
+  let cv;
+  if (view.dim === '3d' && G) { G.controls.update(); G.renderer.render(G.scene, G.camera); cv = G.renderer.domElement; }
+  else {
+    const W = 4096, H = 2048; cv = mk(W, H); const ctx = cv.getContext('2d');
+    if (isReal()) {
+      ensureReal(); ctx.drawImage(realCanvas, 0, 0, W, H);
+      if (view.clouds.on) { ensureClouds(); drawCloudView(); ctx.drawImage(cloudView, 0, 0, W, H); }
+      drawVectors(ctx, W, H, { base: false });
+    } else drawVectors(ctx, W, H, { base: true });
+  }
+  const blob = await new Promise(r => cv.toBlob(r, 'image/png'));
+  const filename = view.dim === '3d' ? 'globe.png' : 'world-map.png';
+  const downloads = window.claude?.use ? await window.claude.use('downloads') : undefined;
+  if (downloads) {
+    try { await downloads.save({ filename, data: blob }); toast('Image saved.'); }
+    catch (err) { if (err?.code !== 'declined') toast('The image could not be saved here. Use Clean view and take a screenshot instead.'); }
+  } else if (downloads === null) toast('Saving files is not available in this view. Use Clean view and take a screenshot instead.');
+  else { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); }
+}
+
+/* ---------- wiring ---------- */
+$('png').onclick = async () => { $('png').disabled = true; $('png').textContent = 'Exporting…'; try { await exportPng(); } finally { $('png').disabled = false; $('png').textContent = 'Export PNG'; } };
+$('modes').onclick = e => { const m = e.target.dataset?.mode; if (m) setMode(m === mode && m === 'paint' ? 'select' : m); };
+$('merge').onclick = mergeSelected;
+$('del').onclick = deleteSelected;
+$('undo').onclick = () => travel(undoStack, redoStack);
+$('redo').onclick = () => travel(redoStack, undoStack);
+$('search').oninput = search;
+function setClean(on) { document.body.classList.toggle('clean', on); $('exitClean').hidden = !on; map.invalidateSize(); }
+$('clean').onclick = () => setClean(true);
+$('exitClean').onclick = () => setClean(false);
+let resetArmed;
+$('reset').onclick = () => {
+  if (!resetArmed) { $('reset').textContent = 'Click again to reset'; resetArmed = setTimeout(() => { resetArmed = null; $('reset').textContent = 'Reset map'; }, 3000); return; }
+  clearTimeout(resetArmed); resetArmed = null; $('reset').textContent = 'Reset map';
+  features = baseMap(); paint = defaultPaint(); R.paintVer++; geomChanged(); selected.clear(); setMode('select'); render(); commit(); fitWorld();
+  toast("Back to today's borders. Undo restores your map.");
+};
+$('io').onclick = () => { $('ioText').value = current; $('ioMsg').textContent = ''; $('dlg').showModal(); };
+$('close').onclick = () => $('dlg').close();
+$('copy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('ioText').value); $('ioMsg').textContent = 'Copied. Paste it into a text file to keep it.'; }
+  catch { $('ioText').select(); $('ioMsg').textContent = 'Text selected. Press Ctrl+C to copy it.'; }
+};
+function loadJson(txt) {
+  const keep = current;
+  try { restore(txt); selected.clear(); setMode('select'); render(); commit(); $('dlg').close(); toast('Map loaded.'); }
+  catch (err) { restore(keep); $('ioMsg').textContent = `That text isn't a map file (${err.message}). Paste the full text you copied from this page, or a GeoJSON file.`; }
+}
+$('loadText').onclick = () => loadJson($('ioText').value);
+$('file').onchange = async e => { const f = e.target.files[0]; if (f) loadJson(await f.text()); e.target.value = ''; };
+document.addEventListener('keydown', e => {
+  const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) && !/range|checkbox|color/.test(document.activeElement.type);
+  if (e.key === 'Escape') { if (document.body.classList.contains('clean')) setClean(false); else setMode('select'); }
+  if (typing) return;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); travel(e.shiftKey ? redoStack : undoStack, e.shiftKey ? undoStack : redoStack); }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); travel(redoStack, undoStack); }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && view.dim === '2d') deleteSelected();
+});
+
+/* ---------- boot ---------- */
+let saved = null;
+try { saved = localStorage.getItem(KEY); } catch {}
+try { if (saved) restore(saved); else { features = baseMap(); paint = defaultPaint(); } } catch { features = baseMap(); paint = defaultPaint(); }
+current = snapshot();
+syncControls();
+applyView();
+</script>
