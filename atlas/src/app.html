@@ -114,6 +114,7 @@ dialog h2 { font: 700 22px var(--font-display); text-transform: uppercase; margi
 dialog textarea { height: 220px; font: 11px/1.4 var(--font-mono); resize: vertical; }
 
 body.clean header, body.clean aside, body.clean #modebar, body.clean #coords, body.clean .leaflet-control-zoom { display: none; }
+body.clean { grid-template-rows: 1fr; }
 body.clean main { grid-template-columns: 1fr; }
 
 @media (max-width: 760px) {
@@ -282,26 +283,26 @@ const STYLES = {
 const BIOMES = [null, ['ice', 'Ice & snow'], ['tundra', 'Tundra'], ['taiga', 'Taiga'], ['forest', 'Forest'], ['grass', 'Grassland'], ['savanna', 'Savanna'], ['desert', 'Desert'], ['jungle', 'Jungle'], ['rock', 'Mountain rock']];
 const [ICE, TUNDRA, TAIGA, FOREST, GRASS, SAVANNA, DESERT, JUNGLE, ROCK] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 const DEFAULTS = {
-  terrain: { seed: 7, iceLat: 70, seaIce: 77, deserts: .6, green: 0, mountains: .5, relief: .6, shallows: .5,
-    colors: { deep: '#0b2c4f', shallow: '#1d7391', ice: '#eef3f6', tundra: '#8d8a6e', taiga: '#2e4f34', forest: '#3e6b34', grass: '#86a04f', savanna: '#b8a660', desert: '#dcc391', jungle: '#22562b', rock: '#776b5f' } },
-  clouds: { on: true, move: true, cover: .5, opacity: .8, speed: .4, seed: 3 },
-  globe: { spin: true, spinSpeed: .4, shading: true, sunLon: 20, sunLat: 10, atmo: true, atmoColor: '#6fb3ff', stars: true, space: '#04070c', shine: .5 },
+  terrain: { seed: 7, iceLat: 70, seaIce: 77, deserts: .6, green: 0, mountains: .5, relief: .45,
+    colors: { deep: '#0b2c4f', ice: '#eef3f6', tundra: '#8d8a6e', taiga: '#2e4f34', forest: '#3e6b34', grass: '#86a04f', savanna: '#b8a660', desert: '#dcc391', jungle: '#22562b', rock: '#776b5f' } },
+  clouds: { on: false, move: true, cover: .5, opacity: .8, speed: .4, seed: 3 },
+  globe: { spin: true, spinSpeed: .4, shading: true, sunLon: 20, sunLat: 10, atmo: true, atmoColor: '#6fb3ff', stars: true, space: '#04070c', shine: .3 },
 };
 const clone = o => JSON.parse(JSON.stringify(o));
-const KEY = 'atlas.map.v1', VIEW_KEY = 'atlas.view.v1';
+const KEY = 'atlas.map.v1', VIEW_KEY = 'atlas.view.v2';
 const $ = id => document.getElementById(id);
 const D2R = Math.PI / 180;
 
 let features = [], selected = new Set(), mode = 'select';
 let undoStack = [], redoStack = [], current = null, nextId = 1;
-let view = { earth: 'countries', names: true, borders: true, style: 'political', dim: '2d', custom: {}, ...clone(DEFAULTS) };
+let view = { earth: 'countries', names: true, borders: true, style: 'realistic', dim: '2d', custom: {}, ...clone(DEFAULTS) };
 try {
   const v = JSON.parse(localStorage.getItem(VIEW_KEY)) || {};
   for (const g of ['terrain', 'clouds', 'globe']) v[g] = { ...clone(DEFAULTS[g]), ...(v[g] || {}) };
   v.terrain.colors = { ...DEFAULTS.terrain.colors, ...(v.terrain.colors || {}) };
   Object.assign(view, v);
 } catch {}
-if (!STYLES[view.style]) view.style = 'political';
+if (!STYLES[view.style]) view.style = 'realistic';
 const simple = () => view.earth === 'simple';
 const eff = () => ({ ...STYLES[view.style], ...(view.custom[view.style] || {}) });
 const isReal = () => STYLES[view.style].fill === 'real';
@@ -596,7 +597,7 @@ function genClouds(seed) {
   return { seed, v };
 }
 
-const R = { fields: null, landOk: false, landVer: 0, coastR: null, key: '', paintVer: 0, cloudField: null, cloudKey: '' };
+const R = { fields: null, landOk: false, landVer: 0, key: '', paintVer: 0, cloudField: null, cloudKey: '' };
 const realCanvas = mk(TW, TH), realCtx = ctx2(realCanvas);
 R.img = realCtx.createImageData(TW, TH);
 const maskCanvas = mk(TW, TH), blurCanvas = mk(TW, TH);
@@ -618,7 +619,7 @@ function buildLand() {
   for (const f of features) x.fill(shapePath(f, X, Y), 'evenodd');
   R.mask = x.getImageData(0, 0, TW, TH).data;
   R.inland = blurOf(36);
-  R.landOk = true; R.coastR = null;
+  R.landOk = true;
 }
 function blurOf(px) {
   const b = ctx2(blurCanvas);
@@ -633,16 +634,14 @@ function ensureReal() {
   const T = view.terrain;
   if (!R.fields || R.fields.seed !== T.seed) { R.fields = genFields(T.seed); R.key = ''; }
   if (!R.landOk) { buildLand(); R.key = ''; }
-  const cr = Math.round(3 + T.shallows * 24);
-  if (R.coastR !== cr) { R.coast = blurOf(cr); R.coastR = cr; R.key = ''; }
   const k = composeKey();
   if (R.key === k) return false;
   compose(); buildSpecBump(); R.key = k;
   return true;
 }
 function compose(x0 = 0, y0 = 0, x1 = TW, y1 = TH) {
-  const T = view.terrain, F = R.fields, d = R.img.data, mask = R.mask, coastA = R.coast, inland = R.inland;
-  const col = [null, ...BIOMES.slice(1).map(b => hexRgb(T.colors[b[0]]))], deep = hexRgb(T.colors.deep), shal = hexRgb(T.colors.shallow), ice = col[ICE];
+  const T = view.terrain, F = R.fields, d = R.img.data, mask = R.mask, inland = R.inland;
+  const col = [null, ...BIOMES.slice(1).map(b => hexRgb(T.colors[b[0]]))], deep = hexRgb(T.colors.deep), ice = col[ICE];
   const El = F.elev, Mo = F.moist, De = F.detail, Sh = F.shade;
   for (let y = y0; y < y1; y++) {
     const lat = 90 - (y + .5) / TH * 180, la = Math.abs(lat), south = lat < 0 ? 4 : 0;
@@ -657,13 +656,11 @@ function compose(x0 = 0, y0 = 0, x1 = TW, y1 = TH) {
       const grain = ((hh ^ (hh >>> 16)) & 1023) / 511.5 - 1;   // per-pixel grain breaks up hard terrain edges
       const det = De[a] * w00 + De[b] * w01 + De[c] * w10 + De[e] * w11 + grain * .35;
       const o = (y * TW + x) * 4, m = mask[o] / 255;
-      // water: deep to shallow towards the coast, sea ice near the poles
-      let k = Math.min(1, coastA[o] / 255 * 1.6); k = k * k * (3 - 2 * k);
-      const ov = 1 + det * .035;
-      let r = (deep[0] + (shal[0] - deep[0]) * k) * ov, g = (deep[1] + (shal[1] - deep[1]) * k) * ov, bl = (deep[2] + (shal[2] - deep[2]) * k) * ov;
+      const E = El[a] * w00 + El[b] * w01 + El[c] * w10 + El[e] * w11;
+      // water is one solid colour, with sea ice near the poles
+      let [r, g, bl] = deep;
       if (T.seaIce < 90 && la + det * 2 > T.seaIce) { r = ice[0] * .93; g = ice[1] * .95; bl = ice[2] * .97; }
       if (m > 0) {
-        const E = El[a] * w00 + El[b] * w01 + El[c] * w10 + El[e] * w11;
         const S = Sh[a] * w00 + Sh[b] * w01 + Sh[c] * w10 + Sh[e] * w11;
         let bio = paint[prow + (x * PW / TW | 0)];
         if (!bio) {
@@ -699,7 +696,7 @@ function buildSpecBump() {
     for (let x = 0; x < NW; x++) {
       const i = y * NW + x, o = i * 4, mo = (2 * y * TW + 2 * x) * 4, land = R.mask[mo] > 127;
       const sea = !land && !(T.seaIce < 90 && la > T.seaIce);
-      si.data[o] = si.data[o + 1] = si.data[o + 2] = sea ? 255 : 0; si.data[o + 3] = 255;
+      si.data[o] = si.data[o + 1] = si.data[o + 2] = sea ? 190 + F.detail[i] * 30 : 0; si.data[o + 3] = 255;
       bi.data[o] = bi.data[o + 1] = bi.data[o + 2] = land ? Math.max(0, Math.min(255, 95 + F.elev[i] * 35 + R.inland[mo] * .3)) : 80; bi.data[o + 3] = 255;
     }
   }
@@ -770,7 +767,7 @@ function ensureGlobe() {
       fragmentShader: 'uniform vec3 glow; varying vec3 vN; void main(){ float i = pow(max(0.0, -vN.z), 1.6) * 1.5; gl_FragColor = vec4(glow * i, 1.0); }',
       side: THREE.BackSide, blending: THREE.AdditiveBlending, transparent: true, depthWrite: false }));
     const haze = new THREE.Mesh(new THREE.SphereGeometry(1.016, 96, 48), new THREE.ShaderMaterial({ uniforms: { glow }, vertexShader: vs,
-      fragmentShader: 'uniform vec3 glow; varying vec3 vN; void main(){ float i = pow(1.0 - max(0.0, vN.z), 3.5) * 0.9; gl_FragColor = vec4(glow * i, 1.0); }',
+      fragmentShader: 'uniform vec3 glow; varying vec3 vN; void main(){ float i = pow(1.0 - max(0.0, vN.z), 4.0) * 0.55; gl_FragColor = vec4(glow * i, 1.0); }',
       blending: THREE.AdditiveBlending, transparent: true, depthWrite: false }));
     const pos = new Float32Array(4000 * 3);
     for (let i = 0; i < 4000; i++) { const v = new THREE.Vector3().randomDirection ? new THREE.Vector3().randomDirection() : new THREE.Vector3(Math.random() - .5, Math.random() - .5, Math.random() - .5).normalize(); v.multiplyScalar(60 + Math.random() * 30).toArray(pos, i * 3); }
@@ -793,13 +790,13 @@ function applyGlobeSettings() {
   const g = view.globe, real = isReal(), m = G.mat;
   G.controls.autoRotate = g.spin; G.controls.autoRotateSpeed = g.spinSpeed * 2.5;
   G.sun.position.copy(dirVec(g.sunLat, g.sunLon).multiplyScalar(5));
-  G.sun.intensity = g.shading ? 1.3 : 0; G.amb.intensity = g.shading ? .1 : 1;
+  G.sun.intensity = g.shading ? 1.1 : 0; G.amb.intensity = g.shading ? .2 : 1;
   G.atmo.visible = G.haze.visible = g.atmo; G.glow.value.set(g.atmoColor);
   G.stars.visible = g.stars; G.scene.background.set(g.space); $('globe').style.background = g.space;
   G.clouds.visible = view.clouds.on;
   const wantSpec = real ? G.specTex : null, wantBump = real ? G.bumpTex : null;
   if (m.specularMap !== wantSpec || m.bumpMap !== wantBump) { m.specularMap = wantSpec; m.bumpMap = wantBump; m.needsUpdate = true; }
-  m.specular.setScalar(real ? g.shine * .7 : 0); m.shininess = 10 + g.shine * 40; m.bumpScale = view.terrain.relief * .045;
+  m.specular.setScalar(real ? g.shine * .3 : 0); m.shininess = 40 + g.shine * 60; m.bumpScale = view.terrain.relief * .02;
 }
 function updateGlobeTexture() {
   const key = [current, R.key, view.style, view.earth, view.names, view.borders, JSON.stringify(view.custom)].join('|');
@@ -943,7 +940,6 @@ const SLIDERS = {
     ['terrain', 'green', 'Greenery', -1, 1, .05, v => (v > 0 ? '+' : '') + Math.round(v * 100) + '%'],
     ['terrain', 'mountains', 'Mountains', 0, 1, .05, pct],
     ['terrain', 'relief', 'Relief shading', 0, 1, .05, pct],
-    ['terrain', 'shallows', 'Coastal shallows', 0, 1, .05, pct],
   ],
   cloudSliders: [['clouds', 'cover', 'Cloud cover', 0, 1, .05, pct], ['clouds', 'opacity', 'Thickness', .1, 1, .05, pct], ['clouds', 'speed', 'Wind speed', 0, 1, .05, pct]],
   globeSliders: [
@@ -958,7 +954,7 @@ for (const [box, list] of Object.entries(SLIDERS)) $(box).innerHTML = list.map((
   `<label class="sl" for="${g}-${k}">${label}<output id="${g}-${k}-out"></output><input type="range" id="${g}-${k}" data-g="${g}" data-k="${k}" min="${min}" max="${max}" step="${step}"></label>`).join('');
 for (const [box, list] of Object.entries(CHECKS)) $(box).innerHTML = list.map(([g, k, label]) =>
   `<label class="check"><input type="checkbox" id="${g}-${k}" data-g="${g}" data-k="${k}"> ${label}</label>`).join('');
-$('terrainColors').innerHTML = [['deep', 'Deep water'], ['shallow', 'Shallow water'], ...BIOMES.slice(1)].map(([k, label]) =>
+$('terrainColors').innerHTML = [['deep', 'Sea'], ...BIOMES.slice(1)].map(([k, label]) =>
   `<label><input type="color" id="tc-${k}" data-g="tcolor" data-k="${k}"> ${label}</label>`).join('');
 $('globeColors').innerHTML = [['atmoColor', 'Atmosphere'], ['space', 'Space']].map(([k, label]) =>
   `<label><input type="color" id="globe-${k}" data-g="globe" data-k="${k}"> ${label}</label>`).join('');
@@ -976,7 +972,7 @@ function renderBrushes() {
 function syncControls() {
   for (const list of Object.values(SLIDERS)) for (const [g, k, , , , , fmt] of list) { $(`${g}-${k}`).value = view[g][k]; $(`${g}-${k}-out`).textContent = fmt(view[g][k]); }
   for (const list of Object.values(CHECKS)) for (const [g, k] of list) $(`${g}-${k}`).checked = view[g][k];
-  for (const k of Object.keys(view.terrain.colors)) $('tc-' + k).value = view.terrain.colors[k];
+  for (const k of Object.keys(DEFAULTS.terrain.colors)) $('tc-' + k).value = view.terrain.colors[k];
   $('globe-atmoColor').value = view.globe.atmoColor; $('globe-space').value = view.globe.space;
   $('seedOut').textContent = 'terrain #' + view.terrain.seed;
   renderBrushes();
@@ -1194,7 +1190,7 @@ $('del').onclick = deleteSelected;
 $('undo').onclick = () => travel(undoStack, redoStack);
 $('redo').onclick = () => travel(redoStack, undoStack);
 $('search').oninput = search;
-function setClean(on) { document.body.classList.toggle('clean', on); $('exitClean').hidden = !on; map.invalidateSize(); }
+function setClean(on) { document.body.classList.toggle('clean', on); $('exitClean').hidden = !on; map.invalidateSize(); if (view.dim === '2d') fitWorld(); }
 $('clean').onclick = () => setClean(true);
 $('exitClean').onclick = () => setClean(false);
 let resetArmed;
