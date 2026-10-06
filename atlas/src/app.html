@@ -439,8 +439,15 @@ function render() {
       clickedCountry = true;
       pick(f.id, e.originalEvent.shiftKey || $('multi')?.checked);
     });
+    layer.featureId = f.id;
+    // shared borders: the neighbour's matching point moves, splits and disappears along with this one
+    layer.on('pm:markerdragstart', e => { linked = sharedPoints(f.id, e.markerEvent.target.getLatLng()); });
+    layer.on('pm:vertexadded', e => { linked = splitShared(f.id, layer, e.indexPath, e.latlng); });
+    layer.on('pm:markerdrag', e => moveLinked(e.markerEvent.target.getLatLng()));
+    layer.on('pm:markerdragend', () => { saveLayers(linked); linked = null; });
+    layer.on('pm:vertexremoved', e => removeShared(f.id, e.marker.getLatLng()));
     layer.on('pm:edit', () => {
-      f.geometry = layer.toGeoJSON().geometry;
+      f.geometry = layer.toGeoJSON(false).geometry;
       coastById.get(f.id)?.setLatLngs(layer.getLatLngs());
       geomChanged(); commit();
     });
@@ -449,6 +456,46 @@ function render() {
   }
   if (mode === 'edit') enableEdit();
   updateLabels(); updatePanel(); updateButtons();
+}
+/* ---------- shared borders ---------- */
+// Neighbouring countries store their common border as identical points, so a point on a shared border can be found by position.
+const same = (a, b) => Math.abs(a.lat - b.lat) < 1e-6 && Math.abs(a.lng - b.lng) < 1e-6;
+let linked = null;
+function ringsOf(layer) { const out = []; (function walk(a) { if (a.length && a[0] instanceof L.LatLng) out.push(a); else a.forEach(walk); })(layer.getLatLngs()); return out; }
+function neighboursAt(id, ll) { const res = []; layerById.forEach((l, oid) => { if (oid !== id && l.getBounds().pad(.01).contains(ll)) res.push(l); }); return res; }
+function sharedPoints(id, ll) {
+  const res = [];
+  for (const l of neighboursAt(id, ll)) for (const ring of ringsOf(l)) for (const p of ring) if (same(p, ll)) res.push({ l, p });
+  return res;
+}
+function splitShared(id, layer, path, ll) {
+  // a point was added in the middle of an edge; add the same point to the neighbour's matching edge
+  let ring = layer.getLatLngs(); for (const i of path.slice(0, -1)) ring = ring[i];
+  const n = ring.length, idx = path[path.length - 1], prev = ring[(idx - 1 + n) % n], next = ring[(idx + 1) % n], res = [];
+  for (const l of neighboursAt(id, ll)) for (const r of ringsOf(l)) for (let j = 0; j < r.length; j++) {
+    const a = r[j], b = r[(j + 1) % r.length];
+    if ((same(a, prev) && same(b, next)) || (same(a, next) && same(b, prev))) { const p = L.latLng(ll.lat, ll.lng); r.splice(j + 1, 0, p); res.push({ l, p }); break; }
+  }
+  if (res.length) { saveLayers(res); return res; }
+  return sharedPoints(id, ll);
+}
+function moveLinked(to) {
+  if (!linked?.length) return;
+  for (const { p } of linked) { p.lat = to.lat; p.lng = to.lng; }
+  for (const l of new Set(linked.map(s => s.l))) l.setLatLngs(l.getLatLngs());
+}
+function removeShared(id, ll) {
+  const res = [];
+  for (const l of neighboursAt(id, ll)) for (const r of ringsOf(l)) { const j = r.findIndex(p => same(p, ll)); if (j >= 0 && r.length > 3) { r.splice(j, 1); res.push({ l }); } }
+  saveLayers(res);
+}
+function saveLayers(list) {
+  for (const l of new Set((list || []).map(s => s.l))) {
+    l.setLatLngs(l.getLatLngs());
+    const f = byId(l.featureId); if (f) f.geometry = l.toGeoJSON(false).geometry;
+    coastById.get(l.featureId)?.setLatLngs(l.getLatLngs());
+    if (l.pm.enabled()) { l.pm.disable(); l.pm.enable({ snappable: true, snapDistance: 14 }); } // refresh its handles if it is being edited too
+  }
 }
 function labelPoint(f) {
   const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
@@ -969,7 +1016,7 @@ $('resetCam').onclick = resetCamera;
 const accent = () => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#b3164f';
 const MODE_TEXT = {
   select: () => simple() ? 'Click land to select it. Shift-click to select several.' : 'Click a country to select it. Shift-click to select several.',
-  edit: () => 'Drag the white points to move the outline. Points snap to nearby edges.',
+  edit: () => 'Drag the white points to move the outline. Shared borders move on both sides.',
   annex: () => 'Click to draw the area the selected country takes over. Click the first point to finish.',
   newc: () => 'Click to draw the new country. It takes all land inside the shape. Click the first point to finish.',
   addland: () => 'Click to draw new land in the sea. Click the first point to finish.',
